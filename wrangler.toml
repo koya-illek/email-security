@@ -1,0 +1,18 @@
+name = "email-security-checker"
+main = "worker.js"
+compatibility_date = "2026-07-23"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "email.illek.ie", custom_domain = true },
+  { pattern = "checker.illek.ie", custom_domain = true }
+]
+
+[vars]
+ENVIRONMENT = "production"
+
+# Optional: Enable Workers KV for persistent caching
+# [[kv_namespaces]]
+# binding = "CACHE"
+# id = "your-kv-namespace-id"
+# preview_id = "your-preview-kv-namespace-id"
