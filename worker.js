@@ -13,7 +13,7 @@ const DOH_PROVIDERS = [
 
 const CACHE_TTL = 86400; // 24 hour edge cache
 const POLICY_CACHE_TTL = 86400; // 24 hour cache for policy HTTP fetches
-const CACHE_VERSION = 'v5-rfc9989';
+const CACHE_VERSION = 'v6-d1-reports';
 const DNS_TIMEOUT_MS = 4500;
 const NORMAL_JSON_BODY_MAX_BYTES = 16 * 1024;
 const HEADER_JSON_BODY_MAX_BYTES = 256 * 1024;
