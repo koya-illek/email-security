@@ -37,12 +37,12 @@
     <section class="hero" id="home">
       <p class="eyebrow"><span>01</span> Email authentication diagnostics</p>
       <h1>Check every DNS record<br><em>that protects your mail.</em></h1>
-      <p class="hero-copy">Audit SPF, DKIM, DMARC, mail routing and transport security. Inspect SPF lookup trees, build safer records, and read message headers with evidence-backed clarity.</p>
+      <p class="hero-copy">Audit SPF, DKIM, DMARC, mail routing and transport security — one domain or twenty-five at once. Inspect SPF lookup trees, build safer records, and read message headers with shareable, evidence-backed reports.</p>
 
       <div class="capability-strip" aria-label="Available analysis">
-        <div class="capability"><strong>Domain posture</strong><span>SPF, DKIM, DMARC, MX and transport</span></div>
-        <div class="capability"><strong>SPF engineering</strong><span>Lookup paths, validation and guarded guidance</span></div>
-        <div class="capability"><strong>Message evidence</strong><span>Authentication results and delivery hops</span></div>
+        <div class="capability"><strong>Domain posture</strong><span>SPF, DKIM, DMARC, MX, transport — single or batch</span></div>
+        <div class="capability"><strong>SPF engineering</strong><span>Lookup paths, validation and flattening preview</span></div>
+        <div class="capability"><strong>Message evidence</strong><span>Authentication results, delivery hops, shareable reports</span></div>
       </div>
 
       <nav class="tool-nav" aria-label="Email security tools" role="tablist">
@@ -372,9 +372,9 @@
     <p class="eyebrow"><span>METHOD</span> Evidence boundaries</p>
     <h2>What this tool measures</h2>
     <div class="method-list">
-      <article><span>DNS</span><div><h3>DNS observation</h3><p>SPF, DKIM, DMARC, MX, and CAA records resolved via DNS-over-HTTPS. Transport security checks MTA-STS and TLS-RPT policies.</p></div></article>
+      <article><span>DNS</span><div><h3>DNS observation</h3><p>SPF, DKIM, DMARC, MX, and CAA records resolved via DNS-over-HTTPS. Transport security checks MTA-STS and TLS-RPT policies. Batch checks run up to 25 domains in parallel.</p></div></article>
       <article><span>HDR</span><div><h3>Receiver-reported authentication</h3><p>Header analysis reflects what the receiving mail server reported (Authentication-Results, Received-SPF, DKIM-Signature), not an independent re-evaluation.</p></div></article>
-      <article><span>ƒ(x)</span><div><h3>Derived finding</h3><p>Interpretation of DNS records and header evidence, with recommendations grounded in published RFCs and current best practice.</p></div></article>
+      <article><span>ƒ(x)</span><div><h3>Derived finding</h3><p>Interpretation of DNS records and header evidence, with recommendations grounded in published RFCs and current best practice. Reports are stored for 14 days and shareable via unguessable links.</p></div></article>
     </div>
     <p class="dialog-footnote">This tool does not test deliverability, send email, or probe private infrastructure. DKIM selector discovery is best-effort and may not find all active selectors.</p>
   </dialog>
