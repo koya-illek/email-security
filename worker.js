@@ -21,8 +21,13 @@ const MTA_STS_POLICY_MAX_BYTES = 16 * 1024;
 const RATE_LIMIT_RETRY_AFTER_SECONDS = 60;
 const STANDARD_RATE_LIMITER_BINDING = 'STANDARD_RATE_LIMITER';
 const EXPENSIVE_RATE_LIMITER_BINDING = 'EXPENSIVE_RATE_LIMITER';
+const REPORT_RETENTION_DAYS = 14;
+const REPORT_ID_RE = /^[A-Za-z0-9_-]{16}$/;
+const BATCH_MAX_DOMAINS = 25;
+const BATCH_CONCURRENCY = 5;
 const EXPENSIVE_POST_PATHS = new Set([
   '/api/check',
+  '/api/batch',
   '/api/header/enrich',
   '/api/spf/inspect',
   '/api/spf/evaluate'
@@ -32,6 +37,53 @@ const EXPENSIVE_POST_PATHS = new Set([
 // each serving location; these are not strict global quotas.
 
 // Common DKIM selectors to check
+// Generate a 16-character unguessable report ID using crypto.randomUUID
+function generateReportId() {
+  const raw = crypto.randomUUID().replace(/-/g, '');
+  return raw.slice(0, 16);
+}
+
+function reportExpiry() {
+  const d = new Date();
+  d.setDate(d.getDate() + REPORT_RETENTION_DAYS);
+  return d.toISOString();
+}
+
+async function storeReport(env, report) {
+  if (!env.DB) return null;
+  const id = generateReportId();
+  const now = new Date().toISOString();
+  const expires = reportExpiry();
+  try {
+    await env.DB.prepare(
+      'INSERT INTO reports (id, type, domain, report_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(
+      id,
+      report._reportType || 'domain',
+      report.domain || null,
+      JSON.stringify(report),
+      now,
+      expires
+    ).run();
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+async function loadReport(env, id) {
+  if (!env.DB || !REPORT_ID_RE.test(id)) return null;
+  try {
+    const row = await env.DB.prepare(
+      'SELECT report_json FROM reports WHERE id = ? AND expires_at > ?'
+    ).bind(id, new Date().toISOString()).first();
+    if (!row) return null;
+    return JSON.parse(row.report_json);
+  } catch {
+    return null;
+  }
+}
+
 const DKIM_SELECTORS = [
   'default', 'google', 'selector1', 'selector2', 'mail', 'email',
   'dkim', 'k1', 's1', 's2', 'sig1', 'smtp', 'mandrill', 'mailgun',
@@ -163,6 +215,12 @@ async function handleRequest(request, env) {
       }
 
       const report = await analyzeDomain(cleanDomain);
+
+      // Store in D1 for shareable reports
+      report._reportType = 'domain';
+      const reportId = await storeReport(env, report);
+      if (reportId) report.id = reportId;
+
       const response = jsonResponse(report, 200, corsHeaders);
       
       // Cache successful results for 1 hour
@@ -269,6 +327,102 @@ async function handleRequest(request, env) {
         return jsonResponse(await validateDmarcRecord(cleanDomain, record), 200, corsHeaders);
       }
       return jsonResponse({ error: 'Record type must be spf or dmarc' }, 400, corsHeaders);
+    } catch (err) {
+      const limited = bodyLimitResponse(err, corsHeaders);
+      if (limited) return limited;
+      return jsonResponse({ error: err.message }, 500, corsHeaders);
+    }
+  }
+
+  // GET /api/reports/:id — load a stored report
+  const reportMatch = url.pathname.match(/^\/api\/reports\/([A-Za-z0-9_-]+)(\/export)?$/);
+  if (reportMatch && request.method === 'GET') {
+    const reportId = reportMatch[1];
+    if (!REPORT_ID_RE.test(reportId)) {
+      return jsonResponse({ error: 'Report not found' }, 404, corsHeaders);
+    }
+    const stored = await loadReport(env, reportId);
+    if (!stored) {
+      return jsonResponse({ error: 'Report not found or expired' }, 404, corsHeaders);
+    }
+    if (reportMatch[2]) {
+      // Export JSON download
+      const filename = stored.domain ? `email-security-${stored.domain}.json` : `email-security-${reportId}.json`;
+      return new Response(JSON.stringify(stored, null, 2), {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+          'Cache-Control': 'private, max-age=60'
+        }
+      });
+    }
+    return jsonResponse(stored, 200, { ...corsHeaders, 'Cache-Control': 'public, max-age=60' });
+  }
+
+  // POST /api/batch — batch domain check
+  if (url.pathname === '/api/batch' && request.method === 'POST') {
+    try {
+      const { domains } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
+      if (!Array.isArray(domains) || !domains.length) {
+        return jsonResponse({ error: 'Domains array required' }, 400, corsHeaders);
+      }
+
+      const cleanDomains = domains
+        .map(d => normalizeDomain(d))
+        .filter(d => d && isValidDomain(d));
+      const uniqueDomains = [...new Set(cleanDomains)].slice(0, BATCH_MAX_DOMAINS);
+
+      if (!uniqueDomains.length) {
+        return jsonResponse({ error: 'No valid domains provided' }, 400, corsHeaders);
+      }
+
+      // Run checks with limited concurrency
+      const results = [];
+      for (let i = 0; i < uniqueDomains.length; i += BATCH_CONCURRENCY) {
+        const chunk = uniqueDomains.slice(i, i + BATCH_CONCURRENCY);
+        const chunkResults = await Promise.all(
+          chunk.map(async (d) => {
+            try {
+              const report = await analyzeDomain(d);
+              return {
+                domain: d,
+                overall_score: report.overall_score,
+                overall_status: report.overall_status,
+                spf: { status: report.spf.status, record: report.spf.record || null },
+                dkim: { status: report.dkim.status, selectors: (report.dkim.selectors || []).map(s => s.selector) },
+                dmarc: { status: report.dmarc.status, policy: report.dmarc.policy || null },
+                mx: { status: report.mx.status, records: (report.mx.records || []).map(r => r.host) },
+                transport: { status: report.transport?.status || 'info' }
+              };
+            } catch (err) {
+              return {
+                domain: d,
+                overall_score: 0,
+                overall_status: 'error',
+                error: err.message,
+                spf: { status: 'fail' },
+                dkim: { status: 'warn' },
+                dmarc: { status: 'fail' },
+                mx: { status: 'fail' },
+                transport: { status: 'info' }
+              };
+            }
+          })
+        );
+        results.push(...chunkResults);
+      }
+
+      const batchReport = {
+        _reportType: 'batch',
+        domains: uniqueDomains,
+        results,
+        created_at: new Date().toISOString()
+      };
+      const batchId = await storeReport(env, batchReport);
+      if (batchId) batchReport.id = batchId;
+
+      return jsonResponse(batchReport, 200, corsHeaders);
     } catch (err) {
       const limited = bodyLimitResponse(err, corsHeaders);
       if (limited) return limited;

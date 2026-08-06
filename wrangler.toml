@@ -33,6 +33,15 @@ namespace_id = "1002"
   limit = 10
   period = 60
 
+# D1 database for shareable reports
+# Requires wrangler login refresh to create — uncomment after running:
+#   npx wrangler d1 create email-security-reports
+# Then paste the database_id below
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "email-security-reports"
+# database_id = "TODO"
+
 # Optional: Enable Workers KV for persistent caching
 # [[kv_namespaces]]
 # binding = "CACHE"

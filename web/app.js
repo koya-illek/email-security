@@ -47,12 +47,17 @@
     tabs[next].focus();
   });
 
-  // Restore tab from hash
-  const initialTab = ["domain", "spf", "builder", "headers"].includes(
-    location.hash.slice(1)
-  )
-    ? location.hash.slice(1)
-    : "domain";
+  // Restore tab from hash — check for report ID first
+  const knownTabs = ["domain", "batch", "spf", "builder", "headers"];
+  const hashVal = location.hash.slice(1);
+  let initialTab = "domain";
+
+  // If hash looks like a report ID (16 chars), load it
+  if (/^[A-Za-z0-9_-]{16}$/.test(hashVal)) {
+    loadSharedReport(hashVal);
+  } else if (knownTabs.includes(hashVal)) {
+    initialTab = hashVal;
+  }
   selectTool(initialTab, false);
 
   // ─── Builder sub-tabs ────────────────────────────────────────────
@@ -91,6 +96,60 @@
       document.execCommand("copy");
       t.remove();
     });
+  }
+
+  // ─── Share + Export buttons ──────────────────────────────────
+  $("#copy-share-link")?.addEventListener("click", () => {
+    if (lastDomainReport?.id) {
+      const url = `${location.origin}/#${lastDomainReport.id}`;
+      copyText(url);
+      const btn = $("#copy-share-link");
+      const orig = btn.textContent;
+      btn.textContent = "Copied!";
+      setTimeout(() => { btn.textContent = orig; }, 2000);
+    } else {
+      copyText(location.origin + location.pathname);
+      const btn = $("#copy-share-link");
+      const orig = btn.textContent;
+      btn.textContent = "Link copied";
+      setTimeout(() => { btn.textContent = orig; }, 2000);
+    }
+  });
+
+  $("#export-json")?.addEventListener("click", () => {
+    if (lastDomainReport?.id) {
+      window.open(`${API_BASE}/api/reports/${lastDomainReport.id}/export`, "_blank");
+    } else if (lastDomainReport) {
+      const blob = new Blob([JSON.stringify(lastDomainReport, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `email-security-${lastDomainReport.domain}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  // ─── Load shared report from D1 ───────────────────────────────
+  async function loadSharedReport(reportId) {
+    domainLoading.classList.remove("hidden");
+    domainError.classList.add("hidden");
+    domainReport.classList.add("hidden");
+    try {
+      const r = await fetch(`${API_BASE}/api/reports/${reportId}`);
+      const d = await r.json();
+      if (d.error) {
+        showDomainError(d.error);
+        selectTool("domain", false);
+      } else {
+        showDomainResults(d);
+      }
+    } catch {
+      showDomainError("Failed to load shared report");
+      selectTool("domain", false);
+    } finally {
+      domainLoading.classList.add("hidden");
+    }
   }
 
   // ─── Domain Check ────────────────────────────────────────────────
@@ -180,7 +239,8 @@
     domainResults.innerHTML = html;
 
     // Auto-open first section
-    domainResults.querySelector("details")?.open = true;
+    const firstDetails = domainResults.querySelector("details");
+    if (firstDetails) firstDetails.open = true;
 
     domainReport.classList.remove("hidden");
     domainReport.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -708,6 +768,185 @@
       ${addresses ? `<div style="margin-top:9px">${addresses}</div>` : ""}
       <details style="margin-top:9px"><summary class="muted">Raw Received header</summary><div class="muted" style="margin-top:6px;word-break:break-word">${esc(h.value)}</div></details>
     </div>`;
+  }
+
+  // ─── Batch Check ────────────────────────────────────────────────
+  const batchForm = $("#batch-form");
+  const batchInput = $("#batch-input");
+  const batchButton = $("#batch-button");
+  const batchLoading = $("#batch-loading");
+  const batchError = $("#batch-error");
+  const batchErrorMsg = $("#batch-error-msg");
+  const batchReport = $("#batch-report");
+  const batchTable = $("#batch-table");
+  const batchCount = $("#batch-count");
+  let lastBatchReport = null;
+  let batchSortCol = null;
+  let batchSortDir = 1;
+
+  batchInput?.addEventListener("input", () => {
+    const lines = batchInput.value.split("\n").map(l => l.trim()).filter(Boolean);
+    batchCount.textContent = `${Math.min(lines.length, 25)} / 25 domains`;
+  });
+
+  $("#batch-clear-btn")?.addEventListener("click", () => {
+    batchInput.value = "";
+    batchReport.classList.add("hidden");
+    batchError.classList.add("hidden");
+    batchCount.textContent = "0 / 25 domains";
+    lastBatchReport = null;
+  });
+
+  batchForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const domains = batchInput.value.split("\n").map(l => l.trim()).filter(Boolean);
+    if (!domains.length) return;
+
+    batchLoading.classList.remove("hidden");
+    batchError.classList.add("hidden");
+    batchReport.classList.add("hidden");
+    batchButton.disabled = true;
+
+    try {
+      const r = await fetch(`${API_BASE}/api/batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domains })
+      });
+      const d = await r.json();
+      if (d.error) {
+        batchErrorMsg.textContent = d.error;
+        batchError.classList.remove("hidden");
+      } else {
+        lastBatchReport = d;
+        renderBatchTable(d.results);
+        batchReport.classList.remove("hidden");
+        batchReport.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    } catch {
+      batchErrorMsg.textContent = "Failed to run batch check";
+      batchError.classList.remove("hidden");
+    } finally {
+      batchLoading.classList.add("hidden");
+      batchButton.disabled = false;
+    }
+  });
+
+  $("#batch-copy-link")?.addEventListener("click", () => {
+    if (lastBatchReport?.id) {
+      const url = `${location.origin}/#batch-${lastBatchReport.id}`;
+      copyText(url);
+      const btn = $("#batch-copy-link");
+      const orig = btn.textContent;
+      btn.textContent = "Copied!";
+      setTimeout(() => { btn.textContent = orig; }, 2000);
+    }
+  });
+
+  $("#batch-export")?.addEventListener("click", () => {
+    if (lastBatchReport?.id) {
+      window.open(`${API_BASE}/api/reports/${lastBatchReport.id}/export`, "_blank");
+    } else if (lastBatchReport) {
+      const blob = new Blob([JSON.stringify(lastBatchReport, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "email-security-batch.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  function renderBatchTable(results) {
+    const sorted = batchSortCol ? [...results].sort((a, b) => {
+      let va, vb;
+      if (batchSortCol === "domain") { va = a.domain; vb = b.domain; }
+      else if (batchSortCol === "score") { va = a.overall_score; vb = b.overall_score; }
+      else { va = (a[batchSortCol]?.status || ""); vb = (b[batchSortCol]?.status || ""); }
+      if (va < vb) return -1 * batchSortDir;
+      if (va > vb) return 1 * batchSortDir;
+      return 0;
+    }) : results;
+
+    const headers = [
+      { key: "domain", label: "Domain" },
+      { key: "score", label: "Score" },
+      { key: "spf", label: "SPF" },
+      { key: "dkim", label: "DKIM" },
+      { key: "dmarc", label: "DMARC" },
+      { key: "mx", label: "MX" },
+      { key: "transport", label: "Transport" }
+    ];
+
+    let html = "<thead><tr>";
+    headers.forEach(h => {
+      const cls = batchSortCol === h.key ? (batchSortDir > 0 ? "sort-asc" : "sort-desc") : "";
+      html += `<th class="${cls}" data-col="${h.key}">${h.label}</th>`;
+    });
+    html += "</tr></thead><tbody>";
+
+    sorted.forEach(r => {
+      const scoreCls = r.overall_score >= 85 ? "good" : r.overall_score >= 70 ? "good" : r.overall_score >= 50 ? "warn" : "poor";
+      html += `<tr data-domain="${esc(r.domain)}">`;
+      html += `<td class="domain-cell">${esc(r.domain)}</td>`;
+      html += `<td class="score-cell"><strong class="${scoreCls}">${r.overall_score}/100</strong></td>`;
+      html += `<td>${batchStatusCell(r.spf)}</td>`;
+      html += `<td>${batchStatusCell(r.dkim)}</td>`;
+      html += `<td>${batchStatusCell(r.dmarc)}</td>`;
+      html += `<td>${batchStatusCell(r.mx)}</td>`;
+      html += `<td>${batchStatusCell(r.transport)}</td>`;
+      html += "</tr>";
+    });
+    html += "</tbody>";
+    batchTable.innerHTML = html;
+
+    // Sort handlers
+    batchTable.querySelectorAll("th[data-col]").forEach(th => {
+      th.addEventListener("click", () => {
+        const col = th.dataset.col;
+        if (batchSortCol === col) batchSortDir = -batchSortDir;
+        else { batchSortCol = col; batchSortDir = 1; }
+        renderBatchTable(lastBatchReport.results);
+      });
+    });
+
+    // Row click → load detailed report
+    batchTable.querySelectorAll("tbody tr").forEach(tr => {
+      tr.addEventListener("click", () => {
+        const domain = tr.dataset.domain;
+        if (domain) {
+          domainInput.value = domain;
+          selectTool("domain");
+          checkForm.requestSubmit();
+        }
+      });
+    });
+  }
+
+  function batchStatusCell(cat) {
+    if (!cat || !cat.status) return '<span class="batch-status info">—</span>';
+    const status = cat.status;
+    const text = status === "pass" ? "Pass" : status === "warn" ? "Warn" : status === "fail" ? "Fail" : status === "info" ? "Info" : status;
+    return `<span class="batch-status ${status}">${text}</span>`;
+  }
+
+  // Check for batch report in URL hash (#batch-<id>)
+  const batchHashMatch = location.hash.match(/^#batch-([A-Za-z0-9_-]{16})$/);
+  if (batchHashMatch) {
+    (async () => {
+      selectTool("batch", false);
+      batchLoading.classList.remove("hidden");
+      try {
+        const r = await fetch(`${API_BASE}/api/reports/${batchHashMatch[1]}`);
+        const d = await r.json();
+        if (!d.error) {
+          lastBatchReport = d;
+          renderBatchTable(d.results);
+          batchReport.classList.remove("hidden");
+        }
+      } catch {}
+      finally { batchLoading.classList.add("hidden"); }
+    })();
   }
 
   // ─── Init ────────────────────────────────────────────────────────

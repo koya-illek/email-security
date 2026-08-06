@@ -47,6 +47,7 @@
 
       <nav class="tool-nav" aria-label="Email security tools" role="tablist">
         <button class="tool-tab active" id="tab-domain" data-tool="domain" role="tab" aria-controls="panel-domain" aria-selected="true">Check Domain</button>
+        <button class="tool-tab" id="tab-batch" data-tool="batch" role="tab" aria-controls="panel-batch" aria-selected="false" tabindex="-1">Batch Check</button>
         <button class="tool-tab" id="tab-spf" data-tool="spf" role="tab" aria-controls="panel-spf" aria-selected="false" tabindex="-1">SPF Inspector</button>
         <button class="tool-tab" id="tab-builder" data-tool="builder" role="tab" aria-controls="panel-builder" aria-selected="false" tabindex="-1">Record Builder</button>
         <button class="tool-tab" id="tab-headers" data-tool="headers" role="tab" aria-controls="panel-headers" aria-selected="false" tabindex="-1">Header Analyzer</button>
@@ -92,6 +93,8 @@
             <h2 id="report-domain">example.com</h2>
           </div>
           <div class="report-actions">
+            <button class="secondary-button" id="copy-share-link" type="button">Copy share link</button>
+            <button class="secondary-button" id="export-json" type="button">Export JSON</button>
             <button class="secondary-button" id="inspect-from-report" type="button">Inspect SPF</button>
             <button class="secondary-button" id="build-from-report" type="button">Build records</button>
             <button class="icon-button" id="new-check" type="button" aria-label="Start a new check">+</button>
@@ -101,6 +104,61 @@
         <div class="metrics" id="domain-metrics"></div>
 
         <div class="results-accordion" id="domain-results"></div>
+      </section>
+    </section>
+
+    <!-- Batch Check Panel -->
+    <section class="tool-panel" id="panel-batch" role="tabpanel" aria-labelledby="tab-batch" hidden>
+      <div class="section-heading">
+        <div>
+          <span class="section-number">BTCH</span>
+          <div><h3>Batch Domain Check</h3><p>Compare email security posture across up to 25 domains at once.</p></div>
+        </div>
+        <span class="evidence-badge">DNS OBSERVATION</span>
+      </div>
+      <form class="trace-form" id="batch-form">
+        <label for="batch-input">Domains (one per line, max 25)</label>
+        <div class="batch-input-shell">
+          <textarea id="batch-input" placeholder="example.com&#10;anotherdomain.org&#10;thirddomain.net" rows="8" spellcheck="false" inputmode="url"></textarea>
+        </div>
+        <div class="form-meta">
+          <span>SPF, DKIM, DMARC, MX, Transport compared</span>
+          <span>5 concurrent checks</span>
+          <span id="batch-count">0 / 25 domains</span>
+        </div>
+        <div class="header-actions" style="margin-top:16px">
+          <button type="submit" class="primary-button" id="batch-button">Check All Domains</button>
+          <button type="button" class="secondary-button" id="batch-clear-btn">Clear</button>
+        </div>
+      </form>
+
+      <div class="loading-panel hidden" id="batch-loading">
+        <span class="spinner" aria-hidden="true"></span>
+        <p id="batch-progress">Checking domains…</p>
+      </div>
+
+      <div class="error-panel hidden" id="batch-error" role="alert">
+        <span class="error-code">BATCH_FAILED</span>
+        <div>
+          <h2>Batch check failed</h2>
+          <p id="batch-error-msg"></p>
+        </div>
+      </div>
+
+      <section class="report hidden" id="batch-report">
+        <header class="report-header">
+          <div>
+            <p class="eyebrow"><span>02</span> Batch comparison report</p>
+            <h2 id="batch-report-title">Domain Comparison</h2>
+          </div>
+          <div class="report-actions">
+            <button class="secondary-button" id="batch-copy-link" type="button">Copy share link</button>
+            <button class="secondary-button" id="batch-export" type="button">Export JSON</button>
+          </div>
+        </header>
+        <div class="batch-table-wrap">
+          <table class="batch-table" id="batch-table"></table>
+        </div>
       </section>
     </section>
 

@@ -863,6 +863,87 @@ dialog h2 { margin: 0 0 30px; font-size: 32px; letter-spacing: -.04em; }
 .method-list p, .dialog-footnote { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
 .dialog-footnote { margin-top: 24px; padding: 16px; background: var(--surface-2); }
 
+/* Batch check */
+.batch-input-shell {
+  border: 1px solid var(--line-bright);
+  background: rgba(10, 25, 21, .88);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .22);
+}
+.batch-input-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(89, 240, 167, .09);
+}
+#batch-input {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  padding: 16px 20px;
+  font-size: 14px;
+  line-height: 1.6;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  outline: none;
+  font-family: var(--mono);
+}
+#batch-input::placeholder { color: #53675f; }
+
+.batch-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  margin-bottom: 24px;
+}
+.batch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.batch-table th {
+  padding: 14px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--line-bright);
+  color: var(--muted);
+  font: 500 10px/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.batch-table th:hover { color: var(--text); }
+.batch-table th.sort-asc::after { content: " \25B2"; color: var(--accent); font-size: 8px; }
+.batch-table th.sort-desc::after { content: " \25BC"; color: var(--accent); font-size: 8px; }
+.batch-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.batch-table tbody tr { cursor: pointer; transition: background .12s; }
+.batch-table tbody tr:hover { background: rgba(89, 240, 167, .04); }
+.batch-table tbody tr:last-child td { border-bottom: none; }
+.batch-table td.domain-cell { font-family: var(--mono); color: var(--text); }
+.batch-table td.score-cell { font: 500 16px/1 var(--mono); }
+.batch-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 500 11px/1 var(--mono);
+}
+.batch-status::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.batch-status.pass { color: var(--accent); }
+.batch-status.pass::before { background: var(--accent); }
+.batch-status.warn { color: var(--warning); }
+.batch-status.warn::before { background: var(--warning); }
+.batch-status.fail { color: var(--critical); }
+.batch-status.fail::before { background: var(--critical); }
+.batch-status.info { color: var(--info); }
+.batch-status.info::before { background: var(--info); }
+
 /* Responsive */
 @media (max-width: 850px) {
   .hero { padding-top: 80px; }
@@ -899,6 +980,10 @@ dialog h2 { margin: 0 0 30px; font-size: 32px; letter-spacing: -.04em; }
   .collapsible-section > summary { padding: 14px 16px; }
   .cs-body { padding: 0 16px 16px; }
   footer { padding: 24px 0; align-items: start; flex-direction: column; }
+}
+  .batch-table { font-size: 12px; }
+  .batch-table th, .batch-table td { padding: 10px 10px; }
+  #batch-input { min-height: 140px; font-size: 13px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
