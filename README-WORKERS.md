@@ -124,6 +124,7 @@ globally routable IPv4 or IPv6 addresses.
 
 - **Workers Free**: 100,000 requests/day, 10 ms CPU time, 128 MB memory, 3 MB compressed Worker size, and 50 external subrequests per invocation
 - **Worker header analysis**: zero external subrequests; local worst-case 256 KB parsing benchmark averages below 1 ms (hardware-dependent)
+- **API rate limits**: standard POST `/api` routes allow 60 requests per client per 60 seconds; expensive routes allow 10 requests per client per 60 seconds. Cloudflare Rate Limiting counters are shared across Worker isolates but scoped to the serving location, so these are not strict global quotas.
 
 ## Local Development
 

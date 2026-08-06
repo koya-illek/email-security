@@ -8,8 +8,30 @@ routes = [
   { pattern = "checker.illek.ie", custom_domain = true }
 ]
 
+[assets]
+directory = "./web"
+binding = "ASSETS"
+
 [vars]
 ENVIRONMENT = "production"
+
+# These counters are shared across Worker isolates within each Cloudflare
+# serving location; they are not strict global quotas.
+[[ratelimits]]
+name = "STANDARD_RATE_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
+[[ratelimits]]
+name = "EXPENSIVE_RATE_LIMITER"
+namespace_id = "1002"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60
 
 # Optional: Enable Workers KV for persistent caching
 # [[kv_namespaces]]

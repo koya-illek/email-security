@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Check SPF, DKIM, DMARC, mail routing and transport security, inspect SPF lookup paths, build safer DNS records, and interpret email headers.">
+  <meta name="theme-color" content="#07100e">
+  <meta property="og:title" content="Email Security Analyzer">
+  <meta property="og:description" content="Evidence-led email authentication checks, SPF tools, DNS record guidance, and message header analysis.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://email.illek.ie/">
+  <meta name="twitter:card" content="summary">
+  <link rel="canonical" href="https://email.illek.ie/">
+  <title>Email Security Analyzer — SPF, DKIM, DMARC & Header Review</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./config.js"></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to email tools</a>
+  <div class="grid-field" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="Email Security Analyzer home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 21 5v7c0 5.5-3.5 9.5-8 11-4.5-1.5-8-5.5-8-11V5l8-3Z"/><path d="m9 13 3 3 5-5"/></svg>
+      </span>
+      <span>Email<span>Security</span></span>
+    </a>
+    <nav aria-label="Primary navigation">
+      <button class="text-button" id="method-button" type="button">Methodology</button>
+      <a class="status-link" href="#principles"><span></span> Edge observer ready</a>
+    </nav>
+  </header>
+
+  <main id="main-content">
+    <section class="hero" id="home">
+      <p class="eyebrow"><span>01</span> Email authentication diagnostics</p>
+      <h1>Check every DNS record<br><em>that protects your mail.</em></h1>
+      <p class="hero-copy">Audit SPF, DKIM, DMARC, mail routing and transport security. Inspect SPF lookup trees, build safer records, and read message headers with evidence-backed clarity.</p>
+
+      <div class="capability-strip" aria-label="Available analysis">
+        <div class="capability"><strong>Domain posture</strong><span>SPF, DKIM, DMARC, MX and transport</span></div>
+        <div class="capability"><strong>SPF engineering</strong><span>Lookup paths, validation and guarded guidance</span></div>
+        <div class="capability"><strong>Message evidence</strong><span>Authentication results and delivery hops</span></div>
+      </div>
+
+      <nav class="tool-nav" aria-label="Email security tools" role="tablist">
+        <button class="tool-tab active" id="tab-domain" data-tool="domain" role="tab" aria-controls="panel-domain" aria-selected="true">Check Domain</button>
+        <button class="tool-tab" id="tab-spf" data-tool="spf" role="tab" aria-controls="panel-spf" aria-selected="false" tabindex="-1">SPF Inspector</button>
+        <button class="tool-tab" id="tab-builder" data-tool="builder" role="tab" aria-controls="panel-builder" aria-selected="false" tabindex="-1">Record Builder</button>
+        <button class="tool-tab" id="tab-headers" data-tool="headers" role="tab" aria-controls="panel-headers" aria-selected="false" tabindex="-1">Header Analyzer</button>
+      </nav>
+    </section>
+
+    <!-- Domain Check Panel -->
+    <section class="tool-panel active" id="panel-domain" role="tabpanel" aria-labelledby="tab-domain">
+      <form class="trace-form" id="check-form">
+        <label for="domain-input">Domain to check</label>
+        <div class="input-shell">
+          <span class="protocol" aria-hidden="true">DNS</span>
+          <input id="domain-input" name="domain" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="example.com" required>
+          <button type="submit" id="check-button">
+            <span>Check security</span>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4-4 4 4-4 4"/></svg>
+          </button>
+        </div>
+        <div class="form-meta">
+          <span>SPF, DKIM, DMARC, MX, transport</span>
+          <span>No login required</span>
+          <span>Results cached 24h</span>
+        </div>
+      </form>
+
+      <div class="loading-panel hidden" id="domain-loading">
+        <span class="spinner" aria-hidden="true"></span>
+        <p>Analyzing DNS records…</p>
+      </div>
+
+      <div class="error-panel hidden" id="domain-error" role="alert">
+        <span class="error-code">CHECK_FAILED</span>
+        <div>
+          <h2>The domain could not be analysed</h2>
+          <p id="domain-error-msg"></p>
+        </div>
+      </div>
+
+      <section class="report hidden" id="domain-report">
+        <header class="report-header">
+          <div>
+            <p class="eyebrow"><span>02</span> Domain security report</p>
+            <h2 id="report-domain">example.com</h2>
+          </div>
+          <div class="report-actions">
+            <button class="secondary-button" id="inspect-from-report" type="button">Inspect SPF</button>
+            <button class="secondary-button" id="build-from-report" type="button">Build records</button>
+            <button class="icon-button" id="new-check" type="button" aria-label="Start a new check">+</button>
+          </div>
+        </header>
+
+        <div class="metrics" id="domain-metrics"></div>
+
+        <div class="results-accordion" id="domain-results"></div>
+      </section>
+    </section>
+
+    <!-- SPF Inspector Panel -->
+    <section class="tool-panel" id="panel-spf" role="tabpanel" aria-labelledby="tab-spf" hidden>
+      <div class="section-heading">
+        <div>
+          <span class="section-number">SPF</span>
+          <div><h3>SPF Inspector</h3><p>Trace nested includes, identify lookup pressure, and generate a guarded flattening preview.</p></div>
+        </div>
+        <span class="evidence-badge">DNS OBSERVATION</span>
+      </div>
+      <form class="trace-form" id="spf-form">
+        <label for="spf-domain-input">Domain whose SPF record should be inspected</label>
+        <div class="input-shell">
+          <span class="protocol" aria-hidden="true">SPF</span>
+          <input id="spf-domain-input" name="domain" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="example.com" required>
+          <button type="submit" id="spf-button">
+            <span>Inspect SPF</span>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4-4 4 4-4 4"/></svg>
+          </button>
+        </div>
+      </form>
+
+      <div class="loading-panel hidden" id="spf-loading">
+        <span class="spinner" aria-hidden="true"></span>
+        <p>Resolving the SPF include tree…</p>
+      </div>
+
+      <div class="error-panel hidden" id="spf-error" role="alert">
+        <span class="error-code">INSPECT_FAILED</span>
+        <div>
+          <h2>SPF inspection failed</h2>
+          <p id="spf-error-msg"></p>
+        </div>
+      </div>
+
+      <section class="report hidden" id="spf-report">
+        <div class="inspector-summary" id="spf-summary"></div>
+        <div id="spf-detail"></div>
+      </section>
+    </section>
+
+    <!-- Record Builder Panel -->
+    <section class="tool-panel" id="panel-builder" role="tabpanel" aria-labelledby="tab-builder" hidden>
+      <div class="section-heading">
+        <div>
+          <span class="section-number">REC</span>
+          <div><h3>Record Builder</h3><p>Create review-ready SPF records and plan a staged DMARC rollout.</p></div>
+        </div>
+        <span class="evidence-badge">DERIVED</span>
+      </div>
+
+      <div class="builder-tabs">
+        <button class="builder-tab active" data-builder="spf" type="button">SPF Builder</button>
+        <button class="builder-tab" data-builder="dmarc" type="button">DMARC Planner</button>
+      </div>
+
+      <section class="panel builder-pane active" id="builder-spf">
+        <div class="form-grid">
+          <div class="field full">
+            <label for="builder-domain">Domain</label>
+            <input id="builder-domain" placeholder="example.com">
+          </div>
+          <div class="field full">
+            <label>Authorised email services</label>
+            <div class="provider-grid" id="provider-options">
+              <label class="provider-option"><input type="checkbox" value="include:spf.protection.outlook.com"> Microsoft 365</label>
+              <label class="provider-option"><input type="checkbox" value="include:_spf.google.com"> Google Workspace</label>
+              <label class="provider-option"><input type="checkbox" value="include:sendgrid.net"> SendGrid</label>
+              <label class="provider-option"><input type="checkbox" value="include:mailgun.org"> Mailgun</label>
+              <label class="provider-option"><input type="checkbox" value="include:amazonses.com"> Amazon SES</label>
+              <label class="provider-option"><input type="checkbox" value="include:servers.mcsv.net"> Mailchimp</label>
+            </div>
+          </div>
+          <div class="field full">
+            <label for="spf-custom">Additional mechanisms</label>
+            <input id="spf-custom" placeholder="ip4:203.0.113.10 include:other-provider.example">
+            <small class="field-help">Space-separated ip4, ip6, include, a or mx mechanisms.</small>
+          </div>
+          <div class="field">
+            <label for="spf-policy">Policy</label>
+            <select id="spf-policy">
+              <option value="~all">Soft fail (~all) — migration</option>
+              <option value="-all">Hard fail (-all) — enforced</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="spf-stage">Current rollout stage</label>
+            <select id="spf-stage">
+              <option value="testing">Testing senders</option>
+              <option value="confirmed">All senders confirmed</option>
+            </select>
+          </div>
+        </div>
+        <div class="notice">Confirm every legitimate sending service before publishing. An omitted sender may fail SPF.</div>
+        <div id="spf-builder-output"></div>
+      </section>
+
+      <section class="panel builder-pane" id="builder-dmarc">
+        <div class="form-grid">
+          <div class="field full">
+            <label for="dmarc-domain">Domain</label>
+            <input id="dmarc-domain" placeholder="example.com">
+          </div>
+          <div class="field">
+            <label for="dmarc-stage">Rollout stage</label>
+            <select id="dmarc-stage">
+              <option value="none">1 — Monitor</option>
+              <option value="quarantine">2 — Quarantine</option>
+              <option value="reject">3 — Reject</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="dmarc-testing">Policy state (RFC 9989)</label>
+            <select id="dmarc-testing">
+              <option value="n">Production (t=n)</option>
+              <option value="y">Testing (t=y)</option>
+            </select>
+          </div>
+          <div class="field full">
+            <label for="dmarc-rua">Aggregate report mailbox</label>
+            <input id="dmarc-rua" placeholder="dmarc@example.com">
+          </div>
+          <div class="field">
+            <label for="dmarc-subdomain">Subdomain policy</label>
+            <select id="dmarc-subdomain">
+              <option value="">Inherit main policy</option>
+              <option value="none">Monitor</option>
+              <option value="quarantine">Quarantine</option>
+              <option value="reject">Reject</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="dmarc-alignment">Alignment</label>
+            <select id="dmarc-alignment">
+              <option value="relaxed">Relaxed — recommended initially</option>
+              <option value="strict">Strict</option>
+            </select>
+          </div>
+        </div>
+        <div class="notice">Start with monitoring, review aggregate reports, then increase enforcement after legitimate senders align.</div>
+        <div id="dmarc-builder-output"></div>
+      </section>
+    </section>
+
+    <!-- Header Analyzer Panel -->
+    <section class="tool-panel" id="panel-headers" role="tabpanel" aria-labelledby="tab-headers" hidden>
+      <div class="section-heading">
+        <div>
+          <span class="section-number">HDR</span>
+          <div><h3>Header Analyzer</h3><p>Interpret receiver-reported authentication, sender alignment, and the delivery chain without overstating certainty.</p></div>
+        </div>
+        <span class="evidence-badge">RECEIVER OBSERVATION</span>
+      </div>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div><span class="section-number">01</span><h3>Complete message headers</h3></div>
+        </div>
+        <div class="cs-body" style="padding-top: 20px">
+          <label class="field-label" for="header-input">Complete message headers</label>
+          <textarea class="header-input" id="header-input" placeholder="Paste the original headers from your mailbox provider…" spellcheck="false" aria-describedby="header-privacy"></textarea>
+          <div class="privacy-note" id="header-privacy">
+            <strong>Stateless analysis.</strong>
+            <span>Headers are sent to this Cloudflare Worker for this request only; this application does not store them. Hop enrichment separately submits up to 10 public IP addresses for PTR lookup.</span>
+          </div>
+          <div class="header-actions">
+            <button type="button" class="primary-button" id="analyze-headers-btn">Analyze Headers</button>
+            <button type="button" class="secondary-button" id="enrich-headers-btn" disabled>Enrich Hops</button>
+            <button type="button" class="secondary-button" id="clear-headers-btn">Clear</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="error-panel hidden" id="header-error" role="alert">
+        <span class="error-code">ANALYSIS_FAILED</span>
+        <div>
+          <h2>Header analysis failed</h2>
+          <p id="header-error-msg"></p>
+        </div>
+      </div>
+
+      <div id="header-results" aria-live="polite"></div>
+    </section>
+
+    <section class="principles" id="principles">
+      <p class="eyebrow"><span>03</span> Built for honest diagnostics</p>
+      <div class="principle-grid">
+        <article><span>01</span><h3>Observed, not guessed</h3><p>Every conclusion points back to captured DNS records or receiver-reported authentication results.</p></article>
+        <article><span>02</span><h3>Clear boundaries</h3><p>Header analysis reflects what the receiver reported, not an independent re-evaluation of the message.</p></article>
+        <article><span>03</span><h3>Stateless by design</h3><p>Pasted headers are processed for this request only and are never stored or logged beyond the analysis.</p></article>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <a class="brand small" href="./">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 21 5v7c0 5.5-3.5 9.5-8 11-4.5-1.5-8-5.5-8-11V5l8-3Z"/><path d="m9 13 3 3 5-5"/></svg>
+      </span>
+      <span>Email Security</span>
+    </a>
+    <p>Independent email security diagnostics. Results are guidance, not proof of deliverability.</p>
+    <p>© 2026 Illek. All rights reserved. <a href="https://tools.illek.ie/privacy">Privacy</a></p>
+    <button class="text-button" id="footer-method-button" type="button">How measurements work</button>
+  </footer>
+
+  <dialog id="method-dialog">
+    <button class="dialog-close" id="dialog-close" type="button" aria-label="Close">×</button>
+    <p class="eyebrow"><span>METHOD</span> Evidence boundaries</p>
+    <h2>What this tool measures</h2>
+    <div class="method-list">
+      <article><span>DNS</span><div><h3>DNS observation</h3><p>SPF, DKIM, DMARC, MX, and CAA records resolved via DNS-over-HTTPS. Transport security checks MTA-STS and TLS-RPT policies.</p></div></article>
+      <article><span>HDR</span><div><h3>Receiver-reported authentication</h3><p>Header analysis reflects what the receiving mail server reported (Authentication-Results, Received-SPF, DKIM-Signature), not an independent re-evaluation.</p></div></article>
+      <article><span>ƒ(x)</span><div><h3>Derived finding</h3><p>Interpretation of DNS records and header evidence, with recommendations grounded in published RFCs and current best practice.</p></div></article>
+    </div>
+    <p class="dialog-footnote">This tool does not test deliverability, send email, or probe private infrastructure. DKIM selector discovery is best-effort and may not find all active selectors.</p>
+  </dialog>
+</body>
+</html>

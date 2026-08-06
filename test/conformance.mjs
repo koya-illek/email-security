@@ -26,6 +26,14 @@ async function post(path, body) {
   return data;
 }
 
+async function postResponse(path, body, headers = {}) {
+  return fetch(base + path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body)
+  });
+}
+
 try {
   await waitForWorker();
   const evaluationCases = [
@@ -85,7 +93,65 @@ try {
   assert.equal(headers.summary.authservId, 'mx.receiver.example');
   assert.equal(headers.hops.length, 1);
 
-  console.log(`Conformance corpus passed: ${evaluationCases.length + 9} cases`);
+  const oversizedBody = JSON.stringify({ record: 'x'.repeat(17 * 1024) });
+  const oversizedResponse = await fetch(base + '/api/records/validate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(oversizedBody));
+        controller.close();
+      }
+    }),
+    duplex: 'half'
+  });
+  assert.equal(oversizedResponse.status, 413);
+  assert.equal(oversizedResponse.headers.get('access-control-allow-origin'), '*');
+
+  const client = '203.0.113.60';
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const response = await postResponse('/api/records/validate', {
+      type: 'spf', domain: '', record: 'v=spf1 -all'
+    }, { 'CF-Connecting-IP': client });
+    assert.equal(response.status, 200, `rate-limit warmup request ${attempt + 1}`);
+  }
+  assert.equal((await fetch(base + '/api/health', { headers: { 'CF-Connecting-IP': client } })).status, 200);
+  assert.equal((await fetch(base + '/api/records/validate', {
+    method: 'OPTIONS', headers: { 'CF-Connecting-IP': client }
+  })).status, 200);
+  const limited = await postResponse('/api/records/validate', {
+    type: 'spf', domain: '', record: 'v=spf1 -all'
+  }, { 'CF-Connecting-IP': client });
+  assert.equal(limited.status, 429);
+  assert.match(limited.headers.get('retry-after') || '', /^\d+$/);
+  assert.equal(limited.headers.get('access-control-allow-origin'), '*');
+
+  // Invalid payloads stop before DNS, enrichment, or SPF evaluation while still
+  // exercising each expensive route's shared namespace.
+  const expensiveClient = '203.0.113.60';
+  for (const [path, body, expectedStatus] of [
+    ['/api/check', {}, 400],
+    ['/api/header/enrich', { ips: [] }, 200],
+    ['/api/spf/inspect', { domain: '' }, 400],
+    ['/api/spf/evaluate', { domain: '', ip: '' }, 400]
+  ]) {
+    const response = await postResponse(path, body, { 'CF-Connecting-IP': expensiveClient });
+    assert.equal(response.status, expectedStatus, `expensive route warmup ${path}`);
+  }
+  for (let attempt = 4; attempt < 10; attempt++) {
+    const response = await postResponse('/api/spf/evaluate', {
+      domain: '', ip: ''
+    }, { 'CF-Connecting-IP': expensiveClient });
+    assert.equal(response.status, 400, `expensive rate-limit warmup request ${attempt + 1}`);
+  }
+  const expensiveLimited = await postResponse('/api/spf/evaluate', {
+    domain: '', ip: ''
+  }, { 'CF-Connecting-IP': expensiveClient });
+  assert.equal(expensiveLimited.status, 429);
+  assert.match(expensiveLimited.headers.get('retry-after') || '', /^\d+$/);
+  assert.equal(expensiveLimited.headers.get('access-control-allow-origin'), '*');
+
+  console.log(`Conformance corpus passed: ${evaluationCases.length + 9} cases plus request-boundary and rate-limit checks`);
 } finally {
   worker.kill('SIGTERM');
 }
