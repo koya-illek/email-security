@@ -98,6 +98,24 @@ function parseAuthResults(value) {
   return { authservId, methods };
 }
 
+function parseReceivedSpf(value) {
+  const text = String(value || '').trim();
+  const result = (text.match(/^(pass|fail|softfail|neutral|none|temperror|permerror|policy|bestguesspass)\b/i) || [])[1]?.toLowerCase() || 'unknown';
+  const fields = Object.fromEntries([...text.matchAll(/(?:^|\s)([a-z][a-z0-9_-]*)=([^\s;]+)/gi)].map(match => [match[1].toLowerCase(), match[2]]));
+  return { raw: text, result, fields, validSyntax: result !== 'unknown' };
+}
+
+function parseDkimSignature(value) {
+  const raw = String(value || '').trim();
+  const tags = Object.fromEntries(raw.split(';').map(part => {
+    const index = part.indexOf('=');
+    return index > 0 ? [part.slice(0, index).trim().toLowerCase(), part.slice(index + 1).trim()] : null;
+  }).filter(Boolean));
+  const required = ['v', 'a', 'd', 's', 'bh', 'b'];
+  const validSyntax = required.every(key => Boolean(tags[key])) && /^1$/.test(tags.v);
+  return { raw, tags, validSyntax };
+}
+
 function authResultCheck(method, result) {
   const label = method.toUpperCase();
   if (!result) {
@@ -124,7 +142,7 @@ function authResultCheck(method, result) {
       recommendation: method === 'spf'
         ? 'Check the envelope sender, forwarding path, and whether the sending IP is authorised by its SPF policy.'
         : method === 'dkim'
-          ? 'Check the signing domain and selector, then confirm the message was not modified after signing.'
+          ? 'Check the signing domain, selector, and whether the message changed after signing.'
           : 'Check whether SPF or DKIM passed with alignment to the visible From domain.'
     };
   }
@@ -199,6 +217,8 @@ function analyzeEmailHeaders(raw) {
   const replyDomain = domainFromAddress(replyTo);
 
   const authHeaders = headers['authentication-results'] || [];
+  const receivedSpfHeaders = headers['received-spf'] || [];
+  const dkimSignatureHeaders = headers['dkim-signature'] || [];
   const parsedAuthHeaders = authHeaders.map(parseAuthResults);
   const selectedAuth = parsedAuthHeaders[0] || { authservId: '', methods: [] };
   const selected = method => {
@@ -228,6 +248,32 @@ function analyzeEmailHeaders(raw) {
     authResultCheck('dkim', dkim),
     authResultCheck('dmarc', dmarc)
   ];
+
+  if (receivedSpfHeaders.length) {
+    const parsedReceivedSpf = receivedSpfHeaders.map(parseReceivedSpf);
+    const malformed = parsedReceivedSpf.filter(item => !item.validSyntax);
+    checks.push({
+      status: malformed.length ? 'warn' : 'info',
+      title: malformed.length ? 'Received-SPF syntax needs review' : 'Received-SPF evidence found',
+      detail: malformed.length
+        ? `${malformed.length} Received-SPF field(s) do not begin with a recognized result.`
+        : `The receiving server supplied ${parsedReceivedSpf.length} Received-SPF result(s): ${parsedReceivedSpf.map(item => item.result).join(', ')}.`,
+      recommendation: 'Received-SPF is receiver-provided evidence. It is not independently re-run by this tool.'
+    });
+  }
+
+  if (dkimSignatureHeaders.length) {
+    const parsedSignatures = dkimSignatureHeaders.map(parseDkimSignature);
+    const malformed = parsedSignatures.filter(item => !item.validSyntax);
+    checks.push({
+      status: malformed.length ? 'warn' : 'info',
+      title: malformed.length ? 'DKIM-Signature syntax needs review' : 'DKIM-Signature fields found',
+      detail: malformed.length
+        ? `${malformed.length} DKIM-Signature field(s) are missing one or more required tags.`
+        : `${parsedSignatures.length} DKIM-Signature field(s) include version, algorithm, signing domain, selector, body hash, and signature tags.`,
+      recommendation: 'This checks header shape only. It does not verify the signature, DNS key, or message body hash.'
+    });
+  }
 
   if (authHeaders.length > 1) {
     const signatures = parsedAuthHeaders.map(parsed =>
@@ -362,6 +408,11 @@ function analyzeEmailHeaders(raw) {
     hops,
     ips,
     enrichment: [],
+    evidence: {
+      authenticationResults: authHeaders,
+      receivedSpf: receivedSpfHeaders.map(parseReceivedSpf),
+      dkimSignatures: dkimSignatureHeaders.map(parseDkimSignature)
+    },
     limits: { maxHeaderBytes: MAX_HEADER_BYTES, maxEnrichedIps: 10 }
   };
 }

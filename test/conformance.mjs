@@ -3,7 +3,8 @@ import { spawn } from 'node:child_process';
 
 const port = 8797;
 const base = `http://127.0.0.1:${port}`;
-const worker = spawn('./node_modules/.bin/wrangler', ['dev', '--local', '--port', String(port)], { stdio: ['ignore', 'pipe', 'pipe'] });
+const worker = spawn('./node_modules/.bin/wrangler', ['dev', '--local', '--host', '127.0.0.1', '--port', String(port)], { stdio: ['ignore', 'pipe', 'pipe'] });
+let postSequence = 0;
 
 async function waitForWorker() {
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -18,7 +19,7 @@ async function waitForWorker() {
 async function post(path, body) {
   const response = await fetch(base + path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` },
     body: JSON.stringify(body)
   });
   const data = await response.json();
@@ -61,6 +62,28 @@ try {
     const data = await post('/api/records/validate', { type: 'spf', domain: '', record });
     assert.equal(data.valid, false, record);
   }
+
+  for (const record of [
+    'V=SpF1 -ALL',
+    'v=SPF1 ip4:192.0.2.1 ~ALL'
+  ]) {
+    const data = await post('/api/records/validate', { type: 'spf', domain: '', record });
+    assert.equal(data.valid, true, `case-insensitive SPF validation: ${record}`);
+  }
+
+  for (const [index, [path, body, expectedStatus]] of [
+    ['/api/check', null, 400],
+    ['/api/header/enrich', { ips: '8.8.8.8' }, 400],
+    ['/api/check', { domain: 'bad..example.com' }, 400],
+    ['/api/batch', { domains: Array.from({ length: 26 }, (_, item) => `host${item}.example.com`) }, 413]
+  ].entries()) {
+    const response = await postResponse(path, body, { 'CF-Connecting-IP': `203.0.113.${100 + index}` });
+    assert.equal(response.status, expectedStatus, `stable input status for ${path}`);
+  }
+
+  const batchWithRejection = await post('/api/batch', { domains: ['example.com', 'bad..example.com'] });
+  assert.equal(batchWithRejection.validation.rejected.length, 1);
+  assert.equal(batchWithRejection.validation.rejected[0].error, 'Invalid public domain');
 
   const current = await post('/api/records/validate', {
     type: 'dmarc', domain: '',
@@ -108,7 +131,8 @@ try {
   assert.equal(oversizedResponse.status, 413);
   assert.equal(oversizedResponse.headers.get('access-control-allow-origin'), '*');
 
-  const client = '203.0.113.60';
+  const runToken = `${process.pid}-${Date.now()}`;
+  const client = `conformance-${runToken}-standard`;
   for (let attempt = 0; attempt < 60; attempt++) {
     const response = await postResponse('/api/records/validate', {
       type: 'spf', domain: '', record: 'v=spf1 -all'
@@ -128,7 +152,7 @@ try {
 
   // Invalid payloads stop before DNS, enrichment, or SPF evaluation while still
   // exercising each expensive route's shared namespace.
-  const expensiveClient = '203.0.113.60';
+  const expensiveClient = `conformance-${runToken}-expensive`;
   for (const [path, body, expectedStatus] of [
     ['/api/check', {}, 400],
     ['/api/header/enrich', { ips: [] }, 200],

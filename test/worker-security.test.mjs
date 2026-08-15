@@ -4,6 +4,17 @@ import { test } from "node:test";
 
 const worker = await readFile(new URL("../worker.js", import.meta.url), "utf8");
 const wrangler = await readFile(new URL("../wrangler.toml", import.meta.url), "utf8");
+const html = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
+const favicon = await readFile(new URL("../web/favicon.svg", import.meta.url), "utf8");
+
+test("public shell includes share metadata, structured data and accessible copy", () => {
+  assert.match(html, /property="og:image"/);
+  assert.match(html, /<script type="application\/ld\+json">/);
+  assert.match(html, /rel="icon"/);
+  assert.match(favicon, /Email Security Checker/);
+  assert.doesNotMatch(html, /class="(?:eyebrow|section-label)"/);
+  assert.doesNotMatch(html, /—/);
+});
 
 test("public UI has hardened headers and explicit discovery routes", () => {
   assert.match(worker, /Content-Security-Policy/);
@@ -14,6 +25,8 @@ test("public UI has hardened headers and explicit discovery routes", () => {
   // Security headers are defined for API responses
   assert.ok(worker.includes("X-Content-Type-Options"));
   assert.ok(worker.includes("Referrer-Policy"));
+  assert.ok(worker.includes("X-Robots-Tag"));
+  assert.match(wrangler, /run_worker_first\s*=\s*true/);
 });
 
 test("unknown routes do not fall through to the application HTML", () => {
@@ -35,6 +48,26 @@ test("MTA-STS policy reads are byte-bounded and abortable", () => {
   assert.match(worker, /const MTA_STS_POLICY_MAX_BYTES = 16 \* 1024/);
   assert.match(worker, /readBodyBytes\(response\.body, MTA_STS_POLICY_MAX_BYTES, controller\.signal/);
   assert.match(worker, /reader\.cancel\(signal\.reason\)/);
+  assert.match(worker, /redirect:\s*'error'/);
+  assert.match(worker, /finalUrl.*url/);
+});
+
+test("P0 analysis keeps DNS uncertainty, score confidence, and SPF flatten proofs explicit", () => {
+  assert.match(worker, /const REQUEST_SUBREQUEST_LIMIT = 45/);
+  assert.match(worker, /status === 'budget_exceeded'/);
+  assert.match(worker, /score_confidence/);
+  assert.match(worker, /unknown_controls/);
+  assert.match(worker, /function findSpfRecord\(records\)/);
+  assert.match(worker, /findSpfRecord/);
+  assert.match(worker, /safeToPublish: context\.proof/);
+  assert.match(worker, /include terminal .* proven -all subset/);
+});
+
+test("API contract rejects null and wrong-type JSON payloads", () => {
+  assert.match(worker, /Request body must be a JSON object/);
+  assert.match(worker, /ips must contain up to 10 unique public/);
+  assert.match(worker, /A batch may contain at most/);
+  assert.match(worker, /validation, request_budget/);
 });
 
 test("Cloudflare Rate Limiting bindings define separate standard and expensive budgets", () => {
@@ -54,7 +87,7 @@ test("POST rate limiting classifies expensive paths, preserves CORS, and bypasse
   ]) {
     assert.match(worker, new RegExp(`['"]${path.replaceAll('/', '\\/')}['"]`));
   }
-  assert.match(worker, /request\.method === 'POST' && url\.pathname\.startsWith\('\/api\/'\) && url\.pathname !== '\/api\/health'/);
+  assert.match(worker, /request\.method === 'POST'.*MCP_PATHS\.has\(url\.pathname\)/);
   assert.match(worker, /await limiter\.limit\(\{ key: client \}\)/);
   assert.match(worker, /429,\s*\{ \.\.\.corsHeaders, 'Retry-After': String\(retryAfter\) \}/);
   assert.match(worker, /if \(request\.method === 'OPTIONS'\)/);

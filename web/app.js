@@ -9,6 +9,8 @@
   let lastDomainReport = null;
   let spfValidationSequence = 0;
   let dmarcValidationSequence = 0;
+  let importedSpf = null;
+  let lastSpfSafetyKey = null;
 
   // ─── Tab Navigation ──────────────────────────────────────────────
   function selectTool(name, pushHash = true) {
@@ -47,14 +49,16 @@
     tabs[next].focus();
   });
 
-  // Restore tab from hash — check for report ID first
+  // Restore tab from hash, checking for a report ID first
   const knownTabs = ["domain", "batch", "spf", "builder", "headers"];
   const hashVal = location.hash.slice(1);
   let initialTab = "domain";
 
   // If hash looks like a report ID (16 chars), load it
   if (/^[A-Za-z0-9_-]{16}$/.test(hashVal)) {
-    loadSharedReport(hashVal);
+    // DOM references used by loadSharedReport are declared below. Queue the
+    // boot read until this script has finished initializing them.
+    queueMicrotask(() => loadSharedReport(hashVal));
   } else if (knownTabs.includes(hashVal)) {
     initialTab = hashVal;
   }
@@ -108,11 +112,7 @@
       btn.textContent = "Copied!";
       setTimeout(() => { btn.textContent = orig; }, 2000);
     } else {
-      copyText(location.origin + location.pathname);
-      const btn = $("#copy-share-link");
-      const orig = btn.textContent;
-      btn.textContent = "Link copied";
-      setTimeout(() => { btn.textContent = orig; }, 2000);
+      setShareUnavailable($("#domain-share-note"), $("#copy-share-link"));
     }
   });
 
@@ -138,7 +138,7 @@
     try {
       const r = await fetch(`${API_BASE}/api/reports/${reportId}`);
       const d = await r.json();
-      if (d.error) {
+      if (!r.ok || d.error) {
         showDomainError(d.error);
         selectTool("domain", false);
       } else {
@@ -216,6 +216,20 @@
   function showDomainResults(d) {
     lastDomainReport = d;
     $("#report-domain").textContent = d.domain;
+    const shareNote = $("#domain-share-note");
+    const shareButton = $("#copy-share-link");
+    const confidenceNote = $("#domain-confidence");
+    const unknownControls = Array.isArray(d.unknown_controls) ? d.unknown_controls : [];
+    confidenceNote.textContent = `Score confidence: ${d.score_confidence || "unknown"}. ${unknownControls.length ? `Inconclusive controls: ${unknownControls.join(", ")}. Retry before changing DNS.` : "All scored controls returned a determinate observation."}`;
+    confidenceNote.classList.toggle("warning", unknownControls.length > 0);
+    if (d.share?.available && d.share.expiresAt) {
+      shareNote.textContent = `Public bearer link. Anyone with the link can view this report until ${new Date(d.share.expiresAt).toLocaleDateString()}; report responses are not cached by browsers or intermediaries.`;
+      shareNote.classList.remove("warning");
+      shareButton.disabled = false;
+      shareButton.textContent = "Copy share link";
+    } else {
+      setShareUnavailable(shareNote, shareButton);
+    }
 
     // Metrics
     const scoreClass = d.overall_score >= 85 ? "good" : d.overall_score >= 70 ? "good" : d.overall_score >= 50 ? "warn" : "poor";
@@ -244,6 +258,17 @@
 
     domainReport.classList.remove("hidden");
     domainReport.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function setShareUnavailable(note, button) {
+    if (note) {
+      note.textContent = "Share link unavailable because report storage did not complete. Export the result locally if needed.";
+      note.classList.add("warning");
+    }
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Share unavailable";
+    }
   }
 
   function statusClass(status) {
@@ -386,6 +411,7 @@
     }
 
     const recursive = d.spf?.lookupCount ?? f.originalLookups;
+    const safePreview = f.safeToPublish === true;
 
     $("#spf-summary").innerHTML = `
       <div class="metric"><small>Recursive lookups</small><strong>${recursive}/10</strong></div>
@@ -400,12 +426,12 @@
     </div>`;
 
     html += `<div class="output-card">
-      <div class="output-head"><strong>Flattened preview</strong><button class="copy-btn" data-copy="flattened" ${f.safeToPublish ? "" : "disabled"}>${f.safeToPublish ? "Copy validated preview" : "Review required"}</button></div>
+      <div class="output-head"><strong>Flattened preview</strong><button class="copy-btn" data-copy="flattened" ${safePreview ? "" : "disabled"}>${safePreview ? "Copy validated preview" : "Review required"}</button></div>
       <div class="dns-value">${esc(f.record)}</div>
     </div>`;
 
-    html += `<div class="notice ${f.safeToPublish ? "good" : ""}">
-      <strong>${f.safeToPublish ? "Validated point-in-time preview" : "Copy blocked — manual review required"}</strong>
+    html += `<div class="notice ${safePreview ? "good" : ""}">
+      <strong>${safePreview ? "Validated point-in-time preview" : "Copy blocked; manual review required"}</strong>
       ${[...(f.validation?.errors || []), ...f.warnings].map(esc).join("<br>")}
     </div>`;
 
@@ -426,7 +452,7 @@
     </details>`;
 
     html += `<div class="header-actions">
-      <button class="secondary-button" data-action="use-spf">Use in Record Builder</button>
+      <button class="secondary-button" data-action="use-spf">${safePreview ? "Use preview in Record Builder" : "Use original in Record Builder"}</button>
     </div>`;
 
     $("#spf-detail").innerHTML = html;
@@ -434,17 +460,14 @@
 
     // Bind buttons
     $("#spf-detail [data-copy='original']").onclick = () => copyText(f.originalRecord);
-    if (f.safeToPublish) {
+    if (safePreview) {
       $("#spf-detail [data-copy='flattened']").onclick = () => copyText(f.record);
     }
     $("#spf-detail [data-action='use-spf']").onclick = () => {
-      $("#builder-domain").value = d.domain;
-      $("#spf-custom").value = f.record
-        .replace(/^v=spf1\s+/, "")
-        .replace(/\s+[?~+-]all\s*$/, "");
-      $("#spf-policy").value =
-        (f.record.match(/([?~+-]all)\s*$/) || [])[1] || "~all";
-      renderSpfBuilder();
+      // An unsafe flattened preview is evidence for review, not a proposed
+      // replacement. Seed the builder with the imported source record so the
+      // preview cannot silently become its trusted baseline.
+      prefillSpfBuilder(d.domain, safePreview ? f.record : f.originalRecord);
       selectTool("builder");
     };
   }
@@ -461,9 +484,8 @@
   }
 
   function validSpfMechanism(value) {
-    return /^(?:ip4:[0-9./]+|ip6:[0-9a-f:/]+|include:[a-z0-9_.-]+|a(?::[a-z0-9_.-]+)?(?:\/\d+)?|mx(?::[a-z0-9_.-]+)?(?:\/\d+)?)$/i.test(
-      value
-    );
+    const bare = String(value || "").replace(/^[+?~-]/, "");
+    return /^(?:ip4:[0-9./]+|ip6:[0-9a-f:/]+|include:[a-z0-9_.-]+|a(?::[a-z0-9_.-]+)?(?:\/\d+)?(?:\/\/\d+)?|mx(?::[a-z0-9_.-]+)?(?:\/\d+)?(?:\/\/\d+)?|exists:[a-z0-9_.-]+|ptr(?::[a-z0-9_.-]+)?|redirect=[a-z0-9_.-]+|exp=[a-z0-9_.-]+)$/i.test(bare) || bare === "a" || bare === "mx";
   }
 
   function validBuilderDomain(value) {
@@ -498,18 +520,37 @@
     const sequence = ++spfValidationSequence;
     const selected = [...$$("#provider-options input:checked")].map((x) => x.value);
     const raw = $("#spf-custom").value.trim().split(/\s+/).filter(Boolean);
-    const valid = raw.filter(validSpfMechanism);
     const invalid = raw.filter((x) => !validSpfMechanism(x));
     const policy = $("#spf-policy").value;
     const stage = $("#spf-stage").value;
     const domain = $("#builder-domain").value.trim();
-    const record = ["v=spf1", ...new Set([...selected, ...valid]), policy].join(" ");
+    const terms = [...selected, ...raw];
+    const generatedRecord = ["v=spf1", ...terms, policy].filter(Boolean).join(" ");
+    // An imported record is displayed verbatim until the user edits one of
+    // the SPF controls. This keeps evaluation order, qualifiers, modifiers,
+    // and the absence of an all mechanism intact even when known providers
+    // are represented by fixed-order checkboxes.
+    const record = importedSpf?.preserve ? importedSpf.originalRecord : generatedRecord;
+    const spfChange = importedSpf && !importedSpf.preserve
+      ? describeSpfChange(importedSpf.originalRecord, record)
+      : null;
+    const noSenders = !selected.length && !raw.length;
+    const noSenderHardFail = noSenders && policy === "-all";
+    const safetyKey = JSON.stringify({
+      record: normalizeSpfRecord(record),
+      stage,
+      domain: domain.toLowerCase(),
+    });
+    if (lastSpfSafetyKey !== null && lastSpfSafetyKey !== safetyKey) {
+      $("#spf-safety-confirm").checked = false;
+    }
+    lastSpfSafetyKey = safetyKey;
 
     const warning =
       stage !== "confirmed" && policy === "-all"
         ? "Use ~all until every legitimate sender is confirmed."
-        : !selected.length && !valid.length
-        ? "No sending service is authorised by this record."
+        : noSenders
+        ? "No sending service is authorised by this record. Do not publish an empty hard-fail record unless this domain sends no mail."
         : "";
 
     const root = $("#spf-builder-output");
@@ -518,6 +559,33 @@
     const extra = [];
     if (!validBuilderDomain(domain)) extra.push("Enter a valid domain before copying.");
     if (invalid.length) extra.push("Correct unsupported terms: " + invalid.join(", "));
+    if (spfChange && !$("#spf-safety-confirm").checked) {
+      extra.push("The proposed SPF record differs from the imported record. Review the before/after safety context and explicitly confirm the change before copying.");
+    }
+    if (noSenderHardFail && !$("#spf-safety-confirm").checked) {
+      extra.push("This empty -all record authorizes no senders. Explicitly confirm that the domain sends no mail before copying.");
+    }
+    if (noSenderHardFail && stage !== "confirmed") {
+      extra.push("Select ‘All senders confirmed’ before copying an empty -all record.");
+    }
+
+    const safetyNotice = $("#spf-safety-notice");
+    const safetyConfirmation = $("#spf-safety-confirmation");
+    const safetyLabel = $("#spf-safety-confirm-label");
+    const requiresConfirmation = Boolean(spfChange) || noSenderHardFail;
+    safetyConfirmation.classList.toggle("hidden", !requiresConfirmation);
+    safetyNotice.classList.toggle("hidden", !requiresConfirmation);
+    safetyNotice.innerHTML = "";
+    if (spfChange) {
+      safetyLabel.textContent = "I have reviewed and intentionally changed the imported SPF record";
+      safetyNotice.innerHTML = `<strong>Review required before copying this SPF change.</strong>
+        <div><strong>Before (imported)</strong><code>${esc(spfChange.before)}</code></div>
+        <div><strong>After (proposed)</strong><code>${esc(spfChange.after)}</code></div>
+        <div>${spfChange.changes.map(esc).join(" ")}</div>`;
+    } else if (noSenderHardFail) {
+      safetyLabel.textContent = "I confirm this domain sends no mail and an empty -all record is intentional";
+      safetyNotice.textContent = "No sending mechanisms are selected. An empty -all record rejects every sender.";
+    }
 
     try {
       const r = await fetch(`${API_BASE}/api/records/validate`, {
@@ -575,19 +643,116 @@
     }
   }
 
+  function prefillSpfBuilder(domain, record) {
+    $("#builder-domain").value = domain;
+    const original = String(record || "").trim();
+    const parsed = parseSpfRecord(original);
+    importedSpf = parsed
+      ? {
+          originalRecord: original,
+          existingTerms: parsed.terms,
+          normalizedRecord: normalizeSpfRecord(original),
+          preserve: true,
+        }
+      : null;
+    $$("#provider-options input").forEach((input) => {
+      input.checked = Boolean(parsed?.terms.some((term) => term.toLowerCase() === input.value.toLowerCase()));
+    });
+    const selectedProviderValues = new Set(
+      $$("#provider-options input:checked").map((input) => input.value.toLowerCase()),
+    );
+    $("#spf-custom").value = (parsed?.terms || [])
+      .filter((term) => !isTerminalSpfTerm(term) && !selectedProviderValues.has(term.toLowerCase()))
+      .join(" ");
+    $("#spf-policy").value = parsed ? parsed.terminal : "~all";
+    // Never turn a stored -all record into implicit confirmation.
+    $("#spf-stage").value = "testing";
+    $("#spf-safety-confirm").checked = false;
+    lastSpfSafetyKey = null;
+    renderSpfBuilder();
+  }
+
   function prefillBuilders(d) {
     $("#builder-domain").value = d.domain;
     $("#dmarc-domain").value = d.domain;
     $("#dmarc-rua").value = (d.dmarc.rua && d.dmarc.rua[0]) || "dmarc@" + d.domain;
     $("#dmarc-stage").value = d.dmarc.policy || "none";
-    $("#spf-policy").value = d.spf.record && /-all(?:\s|$)/.test(d.spf.record) ? "-all" : "~all";
-    renderSpfBuilder();
+    prefillSpfBuilder(d.domain, d.spf?.record);
     renderDmarcBuilder();
   }
 
-  $$("#builder-spf input, #builder-spf select").forEach((x) =>
-    x.addEventListener("input", renderSpfBuilder)
-  );
+  function parseSpfRecord(record) {
+    const tokens = String(record || "").trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length || !/^v=spf1$/i.test(tokens[0])) return null;
+    const terms = tokens.slice(1);
+    const terminal = terms.find((term) => isTerminalSpfTerm(term));
+    return {
+      terms,
+      terminal: terminal ? terminal.toLowerCase() : "",
+    };
+  }
+
+  function isTerminalSpfTerm(term) {
+    return /^[+?~-]?all$/i.test(String(term || ""));
+  }
+
+  function normalizeSpfRecord(record) {
+    return String(record || "").trim().split(/\s+/).filter(Boolean).map((term) => term.toLowerCase()).join(" ");
+  }
+
+  function isSpfModifier(term) {
+    return /^[+?~-]?(?:redirect|exp)=/i.test(String(term || ""));
+  }
+
+  function terminalPolicy(record) {
+    const parsed = parseSpfRecord(record);
+    return parsed?.terminal || "(none)";
+  }
+
+  function sameTerms(left, right) {
+    return left.length === right.length && left.every((term, index) => term === right[index]);
+  }
+
+  function sameTermMultiset(left, right) {
+    if (left.length !== right.length) return false;
+    return [...left].sort().every((term, index) => term === [...right].sort()[index]);
+  }
+
+  function describeSpfChange(before, after) {
+    if (normalizeSpfRecord(before) === normalizeSpfRecord(after)) return null;
+    const beforeParsed = parseSpfRecord(before);
+    const afterParsed = parseSpfRecord(after);
+    const beforeTerms = (beforeParsed?.terms || []).map((term) => term.toLowerCase());
+    const afterTerms = (afterParsed?.terms || []).map((term) => term.toLowerCase());
+    const changes = [];
+    if (beforeParsed && afterParsed) {
+      if (!sameTerms(beforeTerms, afterTerms)) {
+        changes.push(sameTermMultiset(beforeTerms, afterTerms)
+          ? "SPF mechanism order changed."
+          : "SPF mechanisms or qualifiers changed.");
+      }
+      if (terminalPolicy(before) !== terminalPolicy(after)) {
+        changes.push(`Terminal policy changed from ${terminalPolicy(before)} to ${terminalPolicy(after)}.`);
+      }
+      const beforeModifiers = beforeTerms.filter(isSpfModifier).sort();
+      const afterModifiers = afterTerms.filter(isSpfModifier).sort();
+      if (!sameTerms(beforeModifiers, afterModifiers)) changes.push("SPF modifiers changed.");
+    } else {
+      changes.push("The proposed value is not shaped like the imported SPF record.");
+    }
+    return { before, after, changes: changes.length ? changes : ["SPF record content changed."] };
+  }
+
+  function handleSpfEdit(event) {
+    if (event.target.id !== "spf-safety-confirm" && importedSpf) importedSpf.preserve = false;
+    renderSpfBuilder();
+  }
+
+  $$("#builder-spf input:not(#spf-safety-confirm), #builder-spf select").forEach((x) => {
+    x.addEventListener("input", handleSpfEdit);
+    x.addEventListener("change", handleSpfEdit);
+  });
+  $("#spf-safety-confirm")?.addEventListener("input", renderSpfBuilder);
   $$("#builder-dmarc input, #builder-dmarc select").forEach((x) =>
     x.addEventListener("input", renderDmarcBuilder)
   );
@@ -819,6 +984,7 @@
         batchError.classList.remove("hidden");
       } else {
         lastBatchReport = d;
+        updateBatchShareState(d);
         renderBatchTable(d.results);
         batchReport.classList.remove("hidden");
         batchReport.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -840,6 +1006,8 @@
       const orig = btn.textContent;
       btn.textContent = "Copied!";
       setTimeout(() => { btn.textContent = orig; }, 2000);
+    } else {
+      updateBatchShareState(lastBatchReport);
     }
   });
 
@@ -881,14 +1049,15 @@
     let html = "<thead><tr>";
     headers.forEach(h => {
       const cls = batchSortCol === h.key ? (batchSortDir > 0 ? "sort-asc" : "sort-desc") : "";
-      html += `<th class="${cls}" data-col="${h.key}">${h.label}</th>`;
+      const sort = batchSortCol === h.key ? (batchSortDir > 0 ? "ascending" : "descending") : "none";
+      html += '<th class="' + cls + '" aria-sort="' + sort + '"><button class="sort-button" type="button" data-col="' + h.key + '" aria-label="Sort by ' + esc(h.label) + '">' + esc(h.label) + '</button></th>';
     });
     html += "</tr></thead><tbody>";
 
     sorted.forEach(r => {
       const scoreCls = r.overall_score >= 85 ? "good" : r.overall_score >= 70 ? "good" : r.overall_score >= 50 ? "warn" : "poor";
       html += `<tr data-domain="${esc(r.domain)}">`;
-      html += `<td class="domain-cell">${esc(r.domain)}</td>`;
+      html += '<td class="domain-cell"><button class="batch-domain-button" type="button" data-domain="' + esc(r.domain) + '">' + esc(r.domain) + '</button></td>';
       html += `<td class="score-cell"><strong class="${scoreCls}">${r.overall_score}/100</strong></td>`;
       html += `<td>${batchStatusCell(r.spf)}</td>`;
       html += `<td>${batchStatusCell(r.dkim)}</td>`;
@@ -901,19 +1070,19 @@
     batchTable.innerHTML = html;
 
     // Sort handlers
-    batchTable.querySelectorAll("th[data-col]").forEach(th => {
-      th.addEventListener("click", () => {
-        const col = th.dataset.col;
+    batchTable.querySelectorAll(".sort-button[data-col]").forEach(button => {
+      button.addEventListener("click", () => {
+        const col = button.dataset.col;
         if (batchSortCol === col) batchSortDir = -batchSortDir;
         else { batchSortCol = col; batchSortDir = 1; }
         renderBatchTable(lastBatchReport.results);
       });
     });
 
-    // Row click → load detailed report
-    batchTable.querySelectorAll("tbody tr").forEach(tr => {
-      tr.addEventListener("click", () => {
-        const domain = tr.dataset.domain;
+    // Use a real button for keyboard and assistive-technology access.
+    batchTable.querySelectorAll(".batch-domain-button").forEach(button => {
+      button.addEventListener("click", () => {
+        const domain = button.dataset.domain;
         if (domain) {
           domainInput.value = domain;
           selectTool("domain");
@@ -923,8 +1092,24 @@
     });
   }
 
+  function updateBatchShareState(report) {
+    const note = $("#batch-share-note");
+    const button = $("#batch-copy-link");
+    if (report?.share?.available && report.share.expiresAt) {
+      note.textContent = `Public bearer link. Anyone with the link can view this batch report until ${new Date(report.share.expiresAt).toLocaleDateString()}; report responses are not cached by browsers or intermediaries.`;
+      note.classList.remove("warning");
+      button.disabled = false;
+      button.textContent = "Copy share link";
+    } else {
+      note.textContent = "Share link unavailable because report storage did not complete. Export the result locally if needed.";
+      note.classList.add("warning");
+      button.disabled = true;
+      button.textContent = "Share unavailable";
+    }
+  }
+
   function batchStatusCell(cat) {
-    if (!cat || !cat.status) return '<span class="batch-status info">—</span>';
+    if (!cat || !cat.status) return '<span class="batch-status info">Unavailable</span>';
     const status = cat.status;
     const text = status === "pass" ? "Pass" : status === "warn" ? "Warn" : status === "fail" ? "Fail" : status === "info" ? "Info" : status;
     return `<span class="batch-status ${status}">${text}</span>`;
@@ -941,6 +1126,7 @@
         const d = await r.json();
         if (!d.error) {
           lastBatchReport = d;
+          updateBatchShareState(d);
           renderBatchTable(d.results);
           batchReport.classList.remove("hidden");
         }

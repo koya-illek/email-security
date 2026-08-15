@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Email Security Checker</title>
+  <rect width="64" height="64" rx="18" fill="#0b0b16"/>
+  <path d="M32 9 51 16v16c0 12-7 20-19 26C20 52 13 44 13 32V16Z" fill="none" stroke="#ad9bff" stroke-width="5" stroke-linejoin="round"/>
+  <path d="m23 32 6 6 13-14" fill="none" stroke="#ad9bff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

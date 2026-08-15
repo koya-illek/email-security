@@ -1,0 +1,399 @@
+openapi: 3.0.3
+info:
+  title: Email Security Checker API
+  version: 2.0.0
+  description: |
+    Public, read-only analysis of email DNS posture and pasted message headers.
+    No authentication is currently required. Domain checks perform live public DNS
+    and HTTPS observations; header analysis interprets receiver-reported evidence
+    but does not cryptographically verify DKIM signatures. Scores are guidance,
+    not proof of deliverability or safety. Report links are bearer links retained
+    for 14 days and returned with private no-store caching. Domain analysis caps
+    outbound work at 45 subrequests per invocation and exposes provider and
+    uncertainty state in the response.
+servers:
+  - url: https://email.illek.ie
+x-ai-usage:
+  preferred-interface: REST or Streamable HTTP MCP
+  mcp-endpoint: https://email.illek.ie/mcp/v2
+  mcp-protocol-version: 2025-11-25
+  mcp-tools: [analyze_email_domain, analyze_email_headers, analyze_email_domains_batch, inspect_spf, evaluate_spf, validate_email_record, build_email_record, enrich_email_hops, get_email_security_report]
+  instructions:
+    - Use domain-check for a bare public DNS domain, never a URL or email address.
+    - Use header-analysis only with complete raw headers and omit the message body.
+    - Treat pasted Authentication-Results as receiver-reported, not independently verified.
+    - Never describe a high score as a deliverability or safety guarantee.
+x-availability: Open for testing. Limited requests.
+paths:
+  /api/health:
+    get:
+      operationId: getEmailSecurityHealth
+      summary: Return a cheap liveness response
+      responses:
+        '200':
+          description: Service is responding
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, service, version, source_revision, liveness]
+                properties:
+                  ok: { type: boolean }
+                  service: { type: string }
+                  version: { type: string }
+                  source_revision: { type: string }
+                  liveness: { type: boolean }
+  /api:
+    get:
+      operationId: getEmailSecurityDirectory
+      summary: List supported REST and MCP endpoints
+      responses:
+        '200': { description: Endpoint directory, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/check:
+    post:
+      operationId: analyzeEmailDomainLegacy
+      summary: Legacy alias for domain analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DomainRequest' }
+      responses:
+        '200': { description: Completed domain analysis, content: { application/json: { schema: { $ref: '#/components/schemas/DomainReport' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/v2/domain-check:
+    post:
+      operationId: analyzeEmailDomain
+      summary: Analyze public email-security posture for a domain
+      description: Checks SPF, common DKIM selector evidence, DMARC, MX, CAA, reverse DNS, MTA-STS, and TLS-RPT.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DomainRequest' }
+            example: { domain: example.com }
+      responses:
+        '200':
+          description: Completed domain analysis
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainReport' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/v2/header-analysis:
+    post:
+      operationId: analyzeEmailHeaders
+      summary: Interpret received-message headers
+      description: Parses delivery hops, receiver-reported SPF/DKIM/DMARC results, alignment, and contradictory evidence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HeaderRequest' }
+            example:
+              headers: "From: Sender <sender@example.com>\r\nAuthentication-Results: mx.example; spf=pass smtp.mailfrom=example.com; dkim=pass header.d=example.com; dmarc=pass header.from=example.com\r\n\r\n"
+      responses:
+        '200':
+          description: Completed header interpretation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HeaderReport' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { description: Header input exceeds 256 KiB }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/batch:
+    post:
+      operationId: analyzeEmailDomainsBatch
+      summary: Compare email-security posture across up to 25 domains
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [domains], properties: { domains: { type: array, minItems: 1, maxItems: 25, uniqueItems: true, items: { type: string, maxLength: 253 } } } }
+            example: { domains: [example.com, example.org] }
+      responses:
+        '200': { description: Batch comparison report, content: { application/json: { schema: { $ref: '#/components/schemas/BatchReport' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/spf/inspect:
+    post:
+      operationId: inspectSpf
+      summary: Recursively inspect a published SPF policy and flattening preview
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/DomainRequest' }, example: { domain: example.com } } }
+      responses:
+        '200': { description: SPF inspection, content: { application/json: { schema: { type: object, required: [domain, spf, flatten, request_budget], properties: { domain: { type: string }, spf: { type: object, additionalProperties: true }, flatten: { type: object, additionalProperties: true }, request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/spf/evaluate:
+    post:
+      operationId: evaluateSpf
+      summary: Evaluate SPF for a client IP and envelope sender
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SpfEvaluationRequest' }, example: { ip: 192.0.2.1, sender: postmaster@example.com, helo: example.com } } }
+      responses:
+        '200': { description: RFC SPF evaluation result, content: { application/json: { schema: { type: object, required: [status, request_budget], additionalProperties: true, properties: { request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/records/validate:
+    post:
+      operationId: validateEmailRecord
+      summary: Validate a proposed SPF or DMARC TXT record
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RecordValidationRequest' }, example: { type: spf, domain: example.com, record: 'v=spf1 -all' } } }
+      responses:
+        '200': { description: Validation errors, warnings, parsed evidence, and the request budget, content: { application/json: { schema: { $ref: '#/components/schemas/ValidationReport' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/v2/record-build:
+    post:
+      operationId: buildEmailRecord
+      summary: Build and validate an SPF or DMARC record with rollout safeguards
+      description: Returns a proposed DNS host and record, full validation, safety warnings, and publishReady. Never publish when publishReady is false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordBuildRequest' }
+            example: { type: spf, domain: example.com, mechanisms: ['include:_spf.google.com'], policy: '~all', rolloutStage: testing }
+      responses:
+        '200': { description: Built and validated record, content: { application/json: { schema: { $ref: '#/components/schemas/RecordBuildReport' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/header/enrich:
+    post:
+      operationId: enrichEmailHops
+      summary: Enrich up to 10 public delivery-hop IP addresses
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [ips], properties: { ips: { type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: { type: string } } } }, example: { ips: [8.8.8.8] } } }
+      responses:
+        '200': { description: Bounded PTR and registration enrichment, content: { application/json: { schema: { type: object, required: [enriched, limit, request_budget], properties: { enriched: { type: array, items: { type: object, additionalProperties: true } }, limit: { type: integer, enum: [10] }, request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/reports/{reportId}:
+    get:
+      operationId: getEmailSecurityReport
+      summary: Retrieve an unexpired domain or batch report
+      parameters:
+        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}$' } }
+      responses:
+        '200':
+          description: Stored domain or batch report. The response is a bearer-link resource and is private and not cacheable.
+          headers:
+            Cache-Control: { schema: { type: string, example: 'private, no-store' } }
+            X-Report-Retention-Days: { schema: { type: integer, example: 14 } }
+          content: { application/json: { schema: { type: object, additionalProperties: true } } }
+        '404': { description: Report not found or expired }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/reports/{reportId}/export:
+    get:
+      operationId: exportEmailSecurityReport
+      summary: Download an unexpired report as formatted JSON
+      parameters:
+        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}$' } }
+      responses:
+        '200':
+          description: JSON report attachment. The response is private and not cacheable.
+          headers:
+            Cache-Control: { schema: { type: string, example: 'private, no-store' } }
+            X-Report-Retention-Days: { schema: { type: integer, example: 14 } }
+          content: { application/json: { schema: { type: object, additionalProperties: true } } }
+        '404': { description: Report not found or expired }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /mcp/v2:
+    post:
+      operationId: invokeEmailSecurityMcp
+      summary: Invoke the stateless Streamable HTTP MCP endpoint
+      description: Send JSON-RPC 2.0 messages. Accept must include application/json and text/event-stream. Initialize negotiates 2025-11-25, 2025-06-18, or 2024-11-05.
+      parameters:
+        - { name: MCP-Protocol-Version, in: header, required: false, schema: { type: string, enum: ['2025-11-25', '2025-06-18', '2024-11-05'] } }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { type: object, required: [jsonrpc, method], additionalProperties: true } }
+      responses:
+        '200': { description: JSON-RPC response, content: { application/json: { schema: { type: object, required: [jsonrpc], additionalProperties: true } } } }
+        '202': { description: Notification accepted }
+        '406': { description: Accept header must include both MCP response media types }
+        '415': { description: Content-Type must be application/json }
+components:
+  schemas:
+    DomainRequest:
+      type: object
+      additionalProperties: false
+      required: [domain]
+      properties:
+        domain: { type: string, maxLength: 253, example: example.com, description: Bare public DNS domain without scheme, path, or email local part. }
+    HeaderRequest:
+      type: object
+      additionalProperties: false
+      required: [headers]
+      properties:
+        headers: { type: string, maxLength: 262144, description: Complete RFC-style message header block only. }
+    SpfEvaluationRequest:
+      type: object
+      additionalProperties: false
+      required: [ip]
+      anyOf: [{ required: [domain] }, { required: [sender] }]
+      properties:
+        ip: { type: string, description: SMTP client IPv4 or IPv6 address. }
+        sender: { type: string, maxLength: 320 }
+        helo: { type: string, maxLength: 253 }
+        domain: { type: string, maxLength: 253 }
+        record: { type: string, maxLength: 4096, description: Optional proposed SPF record to evaluate instead of live DNS. }
+    RecordValidationRequest:
+      type: object
+      additionalProperties: false
+      required: [type, record]
+      properties:
+        type: { type: string, enum: [spf, dmarc] }
+        domain: { type: string, maxLength: 253 }
+        record: { type: string, maxLength: 4096 }
+    ValidationReport:
+      type: object
+      required: [valid, errors, warnings, request_budget]
+      additionalProperties: true
+      properties:
+        valid: { type: boolean }
+        errors: { type: array, items: { type: string } }
+        warnings: { type: array, items: { type: string } }
+        request_budget: { $ref: '#/components/schemas/RequestBudget' }
+    RecordBuildRequest:
+      type: object
+      additionalProperties: false
+      required: [type, domain]
+      properties:
+        type: { type: string, enum: [spf, dmarc] }
+        domain: { type: string, maxLength: 253 }
+        mechanisms: { type: array, maxItems: 30, items: { type: string, maxLength: 253 }, description: SPF mechanisms in evaluation order. }
+        policy: { type: string, description: SPF all policy or DMARC enforcement policy. }
+        rolloutStage: { type: string, enum: [testing, confirmed] }
+        confirmsNoSenders: { type: boolean }
+        testing: { type: string, enum: [y, n] }
+        rua: { type: string, maxLength: 320 }
+        subdomainPolicy: { type: string, enum: [none, quarantine, reject] }
+        alignment: { type: string, enum: [relaxed, strict] }
+        reviewedReports: { type: boolean }
+    RecordBuildReport:
+      type: object
+      required: [type, host, record, validation, safetyWarnings, publishReady, request_budget]
+      properties:
+        type: { type: string, enum: [spf, dmarc] }
+        host: { type: string }
+        record: { type: string }
+        validation: { $ref: '#/components/schemas/ValidationReport' }
+        safetyWarnings: { type: array, items: { type: string } }
+        publishReady: { type: boolean }
+        request_budget: { $ref: '#/components/schemas/RequestBudget' }
+    RequestBudget:
+      type: object
+      required: [limit, used, remaining, exhausted]
+      properties:
+        limit: { type: integer, minimum: 1, example: 45 }
+        used: { type: integer, minimum: 0 }
+        remaining: { type: integer, minimum: 0 }
+        exhausted: { type: boolean }
+    ReportShare:
+      type: object
+      required: [available, retentionDays, bearer, cacheControl]
+      properties:
+        available: { type: boolean }
+        id: { type: string, nullable: true }
+        retentionDays: { type: integer, example: 14 }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        bearer: { type: boolean, description: Always true because the link is a bearer credential. }
+        cacheControl: { type: string, example: 'private, no-store' }
+    BatchReport:
+      type: object
+      required: [_reportType, domains, results, created_at, validation, request_budget, share]
+      properties:
+        _reportType: { type: string, enum: [batch] }
+        domains: { type: array, items: { type: string } }
+        results: { type: array, items: { type: object, additionalProperties: true } }
+        created_at: { type: string, format: date-time }
+        id: { type: string }
+        validation: { type: object, required: [accepted, rejected], properties: { accepted: { type: array, items: { type: string } }, rejected: { type: array, items: { type: object, additionalProperties: true } } } }
+        request_budget: { $ref: '#/components/schemas/RequestBudget' }
+        share: { $ref: '#/components/schemas/ReportShare' }
+        source_revision: { type: string }
+    DomainReport:
+      type: object
+      required: [domain, timestamp, spf, dkim, dmarc, mx, caa, ptr, transport, dns, provenance, score_confidence, unknown_controls, request_budget, overall_score, overall_status, share]
+      properties:
+        domain: { type: string }
+        timestamp: { type: string, format: date-time }
+        overall_score: { type: integer, minimum: 0, maximum: 100 }
+        overall_status: { type: string, enum: [excellent, good, fair, poor] }
+        score_confidence: { type: string, enum: [high, medium, low] }
+        unknown_controls: { type: array, items: { type: string } }
+        source_revision: { type: string }
+        provenance: { type: object, required: [generatedAt, sourceRevision, dnsProviders, observation], additionalProperties: true }
+        request_budget: { $ref: '#/components/schemas/RequestBudget' }
+        share: { $ref: '#/components/schemas/ReportShare' }
+        spf: { $ref: '#/components/schemas/CheckResult' }
+        dkim: { $ref: '#/components/schemas/CheckResult' }
+        dmarc: { $ref: '#/components/schemas/CheckResult' }
+        mx: { $ref: '#/components/schemas/CheckResult' }
+        caa: { $ref: '#/components/schemas/CheckResult' }
+        ptr: { $ref: '#/components/schemas/CheckResult' }
+        transport: { $ref: '#/components/schemas/CheckResult' }
+        dns: { type: object, additionalProperties: true, description: Explicit DNS observation state for each queried control. }
+    CheckResult:
+      type: object
+      additionalProperties: true
+      description: Control-specific evidence, status, records, checks, warnings, and errors where applicable.
+    HeaderReport:
+      type: object
+      required: [summary, checks, hops, ips, enrichment, limits]
+      properties:
+        summary: { $ref: '#/components/schemas/HeaderSummary' }
+        checks:
+          type: array
+          items: { $ref: '#/components/schemas/HeaderCheck' }
+        hops: { type: array, items: { type: object, additionalProperties: true } }
+        ips: { type: array, maxItems: 10, items: { type: string } }
+        enrichment: { type: array, items: { type: object, additionalProperties: true } }
+        limits: { type: object, additionalProperties: true }
+    HeaderSummary:
+      type: object
+      required: [status, verdict, confidence, passCount, spf, dkim, dmarc]
+      properties:
+        status: { type: string, enum: [pass, warn, fail, info] }
+        verdict: { type: string }
+        confidence: { type: string }
+        passCount: { type: integer, minimum: 0, maximum: 3 }
+        fromDomain: { type: string }
+        returnDomain: { type: string }
+        replyDomain: { type: string }
+        spf: { type: string }
+        dkim: { type: string }
+        dmarc: { type: string }
+    HeaderCheck:
+      type: object
+      required: [status, title, detail, recommendation]
+      properties:
+        status: { type: string, enum: [pass, warn, fail, info] }
+        title: { type: string }
+        detail: { type: string }
+        recommendation: { type: string }
+    Error:
+      type: object
+      additionalProperties: true
+      properties:
+        error: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid JSON or input
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Request limit reached; retry after the interval in the response headers
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

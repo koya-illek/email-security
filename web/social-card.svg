@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#0b0b16"/>
+  <circle cx="1010" cy="280" r="220" fill="#342766" opacity=".52"/>
+  <g fill="none" stroke="#ad9bff" stroke-width="8"><path d="M1008 120 1120 163v91c0 107-61 183-112 212-51-29-112-105-112-212v-91Z"/><path d="m956 282 37 38 72-86"/></g>
+  <text x="72" y="105" fill="#f4f1ff" font-family="Arial, sans-serif" font-size="31" font-weight="700">Email<tspan fill="#ad9bff">Security</tspan></text>
+  <text x="72" y="250" fill="#f4f1ff" font-family="Arial, sans-serif" font-size="65" font-weight="700">Understand your email</text>
+  <text x="72" y="325" fill="#ad9bff" font-family="Arial, sans-serif" font-size="65">security posture.</text>
+  <text x="76" y="402" fill="#aaa6bd" font-family="Arial, sans-serif" font-size="25">SPF, DKIM, DMARC, transport and message evidence</text>
+</svg>

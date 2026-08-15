@@ -2,6 +2,8 @@ name = "email-security-checker"
 main = "worker.js"
 compatibility_date = "2026-07-23"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
 
 routes = [
   { pattern = "email.illek.ie", custom_domain = true },
@@ -11,9 +13,19 @@ routes = [
 [assets]
 directory = "./web"
 binding = "ASSETS"
+run_worker_first = true
 
 [vars]
 ENVIRONMENT = "production"
+# Replace this value during a release with the immutable source revision.
+SOURCE_REVISION = "working-tree-2026-08-15"
+DAILY_POST_LIMIT = "500"
+REPORT_DAILY_LIMIT = "120"
+
+# Remove expired shareable reports on a regular schedule. Expired links stop
+# working at expires_at even if the next cleanup invocation is still pending.
+[triggers]
+crons = ["17 * * * *"]
 
 # These counters are shared across Worker isolates within each Cloudflare
 # serving location; they are not strict global quotas.
