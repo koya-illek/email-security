@@ -13,7 +13,7 @@
   let lastSpfSafetyKey = null;
 
   // ─── Tab Navigation ──────────────────────────────────────────────
-  function selectTool(name, pushHash = true) {
+  function selectTool(name, pushHash = true, focusPanel = true) {
     $$(".tool-tab").forEach((x) => {
       const active = x.dataset.tool === name;
       x.classList.toggle("active", active);
@@ -26,9 +26,9 @@
       x.hidden = !active;
     });
     if (pushHash) history.replaceState(null, "", "#" + name);
-    if (name === "domain") $("#domain-input")?.focus();
-    if (name === "spf") $("#spf-domain-input")?.focus();
-    if (name === "headers") $("#header-input")?.focus();
+    if (focusPanel && name === "domain") $("#domain-input")?.focus();
+    if (focusPanel && name === "spf") $("#spf-domain-input")?.focus();
+    if (focusPanel && name === "headers") $("#header-input")?.focus();
   }
 
   $$(".tool-tab").forEach((x) =>
@@ -62,7 +62,7 @@
   } else if (knownTabs.includes(hashVal)) {
     initialTab = hashVal;
   }
-  selectTool(initialTab, false);
+  selectTool(initialTab, false, false);
 
   // ─── Builder sub-tabs ────────────────────────────────────────────
   $$(".builder-tab").forEach((x) =>
@@ -1135,6 +1135,4 @@
     })();
   }
 
-  // ─── Init ────────────────────────────────────────────────────────
-  domainInput?.focus();
 })();

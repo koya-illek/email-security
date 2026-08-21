@@ -93,6 +93,18 @@ test('keeps every tool tab visible on narrow screens', async ({ page }) => {
   await expect(page.getByRole('tab', { name: 'Header Analyzer' })).toHaveAttribute('aria-selected', 'true');
 });
 
+test('keeps the product introduction visible on a fresh mobile visit', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  expect(await page.evaluate(() => scrollY)).toBe(0);
+  await expect(page.locator('h1')).toBeInViewport();
+  await expect(page.getByLabel('Domain to check')).not.toBeFocused();
+  for (const tab of await page.getByRole('tab').all()) {
+    const box = await tab.boundingBox();
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+});
+
 test('exposes labelled inputs, keyboard tabs, metadata and privacy guidance', async ({ page }) => {
   await page.goto('/');
   await expect(page).toHaveTitle(/SPF, DKIM, DMARC/);
