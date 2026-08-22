@@ -105,7 +105,7 @@ MCP publishes `analyze_email_domain`, `analyze_email_headers`, `analyze_email_do
 | Cloudflare Workers and Assets | Runtime, custom domains, static site, request handling, and Cron | Normal service request metadata | Yes |
 | Cloudflare D1 | Shareable report storage and durable fallback quota state | Report JSON, expiry metadata, opaque IDs, one-way client fingerprints | Required for sharing |
 | Cloudflare Rate Limiting bindings | Edge abuse controls for standard and expensive routes | Cloudflare-managed request keys and counters | Production control |
-| Cloudflare Cache API | Caches repeated domain, PTR, and MTA-STS observations | Internal cache keys and processed responses | Performance optimization |
+| Cloudflare Cache API | Caches repeated domain and PTR observations, plus durable MTA-STS observations (fetched policies or definitive HTTP answers; transient fetch failures stay uncached) | Internal cache keys and processed responses | Performance optimization |
 | Cloudflare DNS over HTTPS | Primary DNS observations | Domain or address and record type | Yes |
 | Google Public DNS | Transient-error fallback and provider evidence | Domain or address and record type | Fallback |
 | Quad9 DNS over HTTPS | Additional transient-error fallback | Domain or address and record type | Fallback |

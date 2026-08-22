@@ -640,7 +640,9 @@ async function handleRequest(request, env) {
   }
 
   // Serve static assets (index.html, styles.css, app.js, robots.txt, sitemap.xml, etc.)
-  if (request.method === 'GET' && !url.pathname.startsWith('/api/')) {
+  // HEAD is served like GET with the body stripped by the runtime, so uptime
+  // probes and link checkers do not see the site as a 404.
+  if ((request.method === 'GET' || request.method === 'HEAD') && !url.pathname.startsWith('/api/')) {
     if (env.ASSETS) {
       const response = await env.ASSETS.fetch(request);
       const headers = new Headers(response.headers);
@@ -2403,12 +2405,20 @@ async function fetchMtaStsPolicy(domain, budget = null) {
     clearTimeout(timer);
   }
 
-  await cache.put(cacheKey, new Response(JSON.stringify(result), {
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': `public, max-age=${POLICY_CACHE_TTL}, stale-while-revalidate=86400`
-    }
-  }));
+  // A definitive observation (policy fetched, or an HTTP answer such as 404)
+  // may be cached for a day. Transport-level failures — timeouts, aborted
+  // bodies, network errors — are not observations; caching one would pin an
+  // unreachable verdict into the edge cache for 24h, so they stay uncached
+  // and retry on the next request.
+  const durableObservation = result.fetched || (result.status !== null && !result.error);
+  if (durableObservation) {
+    await cache.put(cacheKey, new Response(JSON.stringify(result), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': `public, max-age=${POLICY_CACHE_TTL}, stale-while-revalidate=86400`
+      }
+    }));
+  }
 
   return result;
 }

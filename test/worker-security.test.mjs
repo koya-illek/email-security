@@ -44,12 +44,16 @@ test("API JSON parsing uses bounded stream reads", () => {
   assert.match(worker, /await reader\.cancel\(\)/);
 });
 
-test("MTA-STS policy reads are byte-bounded and abortable", () => {
+test("MTA-STS policy reads are byte-bounded, abortable, and cache only durable observations", () => {
   assert.match(worker, /const MTA_STS_POLICY_MAX_BYTES = 16 \* 1024/);
   assert.match(worker, /readBodyBytes\(response\.body, MTA_STS_POLICY_MAX_BYTES, controller\.signal/);
   assert.match(worker, /reader\.cancel\(signal\.reason\)/);
   assert.match(worker, /redirect:\s*'error'/);
   assert.match(worker, /finalUrl.*url/);
+  // Transient failures (timeout/abort/network) must not be pinned into the
+  // edge cache; only fetched policies or definitive HTTP answers are cached.
+  assert.match(worker, /const durableObservation = result\.fetched \|\| \(result\.status !== null && !result\.error\)/);
+  assert.match(worker, /if \(durableObservation\) \{\s*await cache\.put/);
 });
 
 test("P0 analysis keeps DNS uncertainty, score confidence, and SPF flatten proofs explicit", () => {
