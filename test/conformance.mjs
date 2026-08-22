@@ -97,6 +97,27 @@ try {
   assert.equal(batchWithRejection.validation.rejected.length, 1);
   assert.equal(batchWithRejection.validation.rejected[0].error, 'Invalid public domain');
 
+  // Budget-priority regression: on a worst-case multi-MX domain, scored
+  // controls must complete before the unscored PTR observation consumes the
+  // remaining subrequests. gmail.com publishes five MX hosts and only
+  // date-based (2023…) DKIM selectors, so an exhausted-before-DKIM run shows
+  // up as zero discovered selectors.
+  const worstCase = await post('/api/check', { domain: 'gmail.com' });
+  assert.equal(worstCase.spf.status, 'pass', 'gmail.com SPF should resolve within budget');
+  assert.equal(worstCase.spf.unknown, false, 'gmail.com SPF must not be inconclusive');
+  assert.ok(
+    (worstCase.dkim.selectors || []).length > 0,
+    `DKIM selector discovery must get budget before PTR; got ${(worstCase.dkim.selectors || []).length} selectors`
+  );
+  assert.ok(
+    !worstCase.unknown_controls.includes('dkim'),
+    `DKIM must not be budget-starved; unknown_controls: ${worstCase.unknown_controls.join(', ')}`
+  );
+  assert.equal(
+    worstCase.transport.policy?.fetched, true,
+    `MTA-STS policy fetch must succeed via manual redirect handling; got: ${worstCase.transport.policy?.error || 'no policy object'}`
+  );
+
   const current = await post('/api/records/validate', {
     type: 'dmarc', domain: '',
     record: 'v=DMARC1; p=reject; t=y; np=quarantine; psd=n; fo=0:1; rua=mailto:dmarc@example.com;'

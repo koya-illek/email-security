@@ -48,8 +48,13 @@ test("MTA-STS policy reads are byte-bounded, abortable, and cache only durable o
   assert.match(worker, /const MTA_STS_POLICY_MAX_BYTES = 16 \* 1024/);
   assert.match(worker, /readBodyBytes\(response\.body, MTA_STS_POLICY_MAX_BYTES, controller\.signal/);
   assert.match(worker, /reader\.cancel\(signal\.reason\)/);
-  assert.match(worker, /redirect:\s*'error'/);
-  assert.match(worker, /finalUrl.*url/);
+  // workerd rejects redirect:'error' before sending anything (every policy
+  // fetch failed in production), so the fetch must use 'manual' and then
+  // refuse any 3xx or off-origin final URL itself.
+  assert.doesNotMatch(worker, /redirect:\s*'error'/);
+  assert.match(worker, /redirect:\s*'manual'/);
+  assert.match(worker, /response\.status >= 300 && response\.status < 400/);
+  assert.match(worker, /did not remain on the expected mta-sts origin/);
   // Transient failures (timeout/abort/network) must not be pinned into the
   // edge cache; only fetched policies or definitive HTTP answers are cached.
   assert.match(worker, /const durableObservation = result\.fetched \|\| \(result\.status !== null && !result\.error\)/);
@@ -65,6 +70,20 @@ test("P0 analysis keeps DNS uncertainty, score confidence, and SPF flatten proof
   assert.match(worker, /findSpfRecord/);
   assert.match(worker, /safeToPublish: context\.proof/);
   assert.match(worker, /include terminal .* proven -all subset/);
+});
+
+test("analysis schedules scored controls before the unscored PTR observation", () => {
+  // PTR carries no score weight but can fan out across every MX host address;
+  // if it is scheduled before DKIM discovery it starves scored controls of
+  // subrequest budget and domains read as poorly configured.
+  const dkimCall = worker.indexOf("checkDKIMSelectors(domain, spf.providers");
+  const ptrCall = worker.indexOf("await checkPTR(");
+  assert.ok(dkimCall > -1 && ptrCall > -1, "both call sites must exist");
+  assert.ok(dkimCall < ptrCall, "DKIM discovery must be scheduled before PTR");
+  assert.match(worker, /const MAX_PTR_OBSERVATIONS = 4/);
+  // The selector scan must reach the whole catalogue: truncating below its
+  // size excluded the date-based entries Google publishes.
+  assert.doesNotMatch(worker, /DKIM_SELECTORS\]\)\]\.slice\(0,/);
 });
 
 test("API contract rejects null and wrong-type JSON payloads", () => {

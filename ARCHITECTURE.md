@@ -66,8 +66,8 @@ The core is currently a single Worker module. The internal separation is logical
 4. DNS queries run through structured DNS over HTTPS. NODATA, NXDOMAIN, timeout, SERVFAIL, provider error, and budget exhaustion remain distinct states.
 5. SPF records are parsed case-insensitively. Includes and redirects are traversed within lookup, void, cycle, depth, and request budgets.
 6. DMARC discovery follows the implemented organisational-domain tree walk and validates external reporting authorisation.
-7. DKIM checks use a bounded selector catalogue. Absence outside that catalogue is reported as limited coverage.
-8. MX, Null MX, implicit MX fallback, CAA, PTR, TLS-RPT, and MTA-STS evidence is collected.
+7. DKIM checks probe the whole bounded selector catalogue, selectors inferred from SPF and MX first. Absence outside that catalogue is reported as limited coverage.
+8. MX, Null MX, implicit MX fallback, CAA, TLS-RPT, and MTA-STS evidence is collected. Within the shared request budget, scored controls are scheduled first (SPF recursion, then DKIM discovery alongside the MTA-STS policy fetch); the unscored inbound PTR observation runs last on remaining subrequests and is capped at four observations.
 9. MTA-STS is fetched only from the expected HTTPS origin with redirects rejected, bounded body reads, and an explicit timeout.
 10. Findings feed a deterministic score. Unknown observations reduce confidence rather than receiving definitive failure points.
 11. The response includes raw evidence, checks, recommendations, score confidence, unknown controls, source revision, and request-budget use.

@@ -37,6 +37,10 @@ const REPORT_ID_RE = /^[A-Za-z0-9_-]{16}$/;
 // falsely "poor"; three domains is the realistic ceiling for honest scores.
 const BATCH_MAX_DOMAINS = 3;
 const BATCH_CONCURRENCY = 5;
+// PTR observation carries no score weight, so it runs after scored controls
+// and is capped well below its theoretical fan-out of 8 hosts x 8 addresses;
+// only the first observation is ever rendered or surfaced.
+const MAX_PTR_OBSERVATIONS = 4;
 const EXPENSIVE_POST_PATHS = new Set([
   '/api/check',
   '/api/v2/domain-check',
@@ -222,10 +226,12 @@ async function createBatchReport(domains, env, requestBudget = null) {
           request_budget: domainBudget.snapshot(),
         };
       } catch (error) {
+        // An analysis error is not evidence about the domain; report every
+        // control as inconclusive so the row cannot read as a failing setup.
+        const unavailable = { status: 'info' };
         return {
           domain, overall_score: 0, overall_status: 'error', error: error.message,
-          spf: { status: 'fail' }, dkim: { status: 'warn' }, dmarc: { status: 'fail' },
-          mx: { status: 'fail' }, transport: { status: 'info' },
+          spf: unavailable, dkim: unavailable, dmarc: unavailable, mx: unavailable, transport: unavailable,
           request_budget: domainBudget.snapshot(),
         };
       }
@@ -1137,15 +1143,20 @@ async function analyzeDomain(domain, budget = createRequestBudget()) {
     queryDNS(`_smtp._tls.${domain}`, 'TXT', budget)
   ]);
 
-  const ptrResult = await checkPTR(domain, mxRecords, budget);
+  // Scored controls claim the shared budget first: SPF recursion, then the
+  // single MTA-STS policy fetch, then DKIM selector discovery. The policy
+  // fetch runs before the wide selector fan-out because a one-request reserve
+  // loses that race and transport evidence would read as inconclusive. PTR is
+  // an unscored supplementary observation and runs last on whatever remains;
+  // scheduling it first starved DKIM discovery entirely on multi-MX domains.
+  const spf = await analyzeSPF(domain, spfRecords, budget);
+  const dmarc = analyzeDMARC(dmarcDiscovery.records, dmarcDiscovery);
   const mtaStsPolicy = mtaStsRecords.some(r => /^\s*v=STSv1(?:\s*;|\s*$)/i.test(r))
     ? await fetchMtaStsPolicy(domain, budget)
     : null;
-
-  // Analyze results
-  const spf = await analyzeSPF(domain, spfRecords, budget);
-  const dmarc = analyzeDMARC(dmarcDiscovery.records, dmarcDiscovery);
   const dkimResults = await checkDKIMSelectors(domain, spf.providers, mxRecords, budget);
+  const ptrResult = await checkPTR(domain, mxRecords, budget);
+
   const dkim = analyzeDKIM(dkimResults);
   const mx = analyzeMX(mxRecords);
   const caa = analyzeCAA(caaRecords);
@@ -1344,8 +1355,10 @@ async function checkDKIMSelectors(domain, providers = [], mxRecords = [], budget
   if (mxText.includes('protection.outlook.com')) ['selector1', 'selector2'].forEach(selector => inferred.add(selector));
   if (mxText.includes('google.com') || mxText.includes('googlemail.com')) inferred.add('google');
 
-  // Check a slightly wider selector set, prioritising selectors inferred from SPF/MX.
-  const selectors = [...new Set([...inferred, ...DKIM_SELECTORS])].slice(0, 14);
+  // Probe the whole bounded catalogue, inferred selectors first. Truncating
+  // the scan below the catalogue size silently excluded its date-based
+  // entries, which is exactly where Google publishes rotated selectors.
+  const selectors = [...new Set([...inferred, ...DKIM_SELECTORS])];
   const lookupState = { transient: false, authoritative: false };
   const results = await Promise.all(
     selectors.map(async selector => {
@@ -1399,12 +1412,14 @@ async function checkPTR(domain, mxRecords = [], budget = null) {
   const observations = [];
   const hosts = [...new Set(mxRecords.map(value => String(value).trim().split(/\s+/).slice(1).join(' ').replace(/\.$/, '')).filter(Boolean))].slice(0, 8);
   for (const mxHost of hosts) {
+    if (observations.length >= MAX_PTR_OBSERVATIONS) break;
     const [aRecords, aaaaRecords] = await Promise.all([
       queryDNS(mxHost, 'A', budget),
       queryDNS(mxHost, 'AAAA', budget)
     ]);
     const addresses = [...aRecords, ...aaaaRecords].filter(ip => ipaddr.isValid(ip)).slice(0, 8);
     for (const ip of addresses) {
+      if (observations.length >= MAX_PTR_OBSERVATIONS) break;
       const ptrName = reverseDnsName(ip);
       const ptrRecords = await queryDNS(ptrName, 'PTR', budget);
       const ptr = ptrRecords[0]?.replace(/\.$/, '') || null;
@@ -2383,13 +2398,21 @@ async function fetchMtaStsPolicy(domain, budget = null) {
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      redirect: 'error',
+      // workerd does not implement the 'error' redirect mode; requesting it
+      // makes every policy fetch throw before any request is sent. 'manual'
+      // returns redirect responses unfollowed, which keeps the rule this
+      // check exists for: the policy must be served from exactly the
+      // expected origin.
+      redirect: 'manual',
       cf: { cacheTtl: POLICY_CACHE_TTL, cacheEverything: true }
     });
     result.status = response.status;
     result.finalUrl = response.url || url;
-    result.redirected = Boolean(response.redirected);
-    if (result.finalUrl !== url || result.redirected) {
+    const wasRedirected = Boolean(response.redirected)
+      || (response.status >= 300 && response.status < 400)
+      || (Boolean(response.url) && response.url !== url);
+    result.redirected = wasRedirected;
+    if (wasRedirected) {
       result.error = 'MTA-STS policy fetch did not remain on the expected mta-sts origin.';
       return result;
     }
