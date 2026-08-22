@@ -140,8 +140,8 @@ function tools() {
     },
     {
       name: 'analyze_email_domains_batch', title: 'Compare email security across domains',
-      description: 'Analyze and compare public SPF, DKIM selector evidence, DMARC, MX, and transport posture for up to 25 unique domains.',
-      inputSchema: { type: 'object', additionalProperties: false, required: ['domains'], properties: { domains: { type: 'array', minItems: 1, maxItems: 25, uniqueItems: true, items: { type: 'string', maxLength: 253 } } } },
+      description: 'Analyze and compare public SPF, DKIM selector evidence, DMARC, MX, and transport posture for up to 3 unique domains. Each domain receives an equal share of the request DNS budget; rows whose share was exhausted report an incomplete request_budget rather than a definitive score.',
+      inputSchema: { type: 'object', additionalProperties: false, required: ['domains'], properties: { domains: { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true, items: { type: 'string', maxLength: 253 } } } },
       outputSchema: { type: 'object', required: ['_reportType', 'domains', 'results', 'created_at', 'validation', 'request_budget', 'share'], properties: { _reportType: { type: 'string', enum: ['batch'] }, domains: { type: 'array', items: { type: 'string' } }, results: { type: 'array', items: { type: 'object' } }, created_at: { type: 'string', format: 'date-time' }, source_revision: { type: 'string' }, id: { type: 'string' }, validation: { type: 'object' }, request_budget: { type: 'object' }, share: { type: 'object' } } },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -201,8 +201,28 @@ function tools() {
 }
 
 async function readMessage(request) {
-  const bytes = new Uint8Array(await request.arrayBuffer());
-  if (bytes.byteLength > MAX_MCP_REQUEST_BYTES) throw new Error('MCP request exceeds the 280 KiB limit');
+  // Stream with the same byte cap the REST paths use instead of buffering
+  // the whole body via arrayBuffer() before checking the limit.
+  const reader = request.body?.getReader?.();
+  if (!reader) throw new Error('Invalid JSON-RPC request');
+  const chunks = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > MAX_MCP_REQUEST_BYTES) {
+      await reader.cancel();
+      throw new Error('MCP request exceeds the 280 KiB limit');
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
   const parsed = JSON.parse(new TextDecoder().decode(bytes));
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid JSON-RPC request');
   return parsed;
