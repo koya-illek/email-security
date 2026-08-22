@@ -2206,12 +2206,14 @@ function estimateDkimKeyBits(publicKey) {
 function analyzeMX(records) {
   if (!records.length) {
     const unknown = ['timeout', 'servfail', 'error', 'budget_exceeded'].includes(records?.dnsStatus);
+    // Missing MX is informational either way: RFC 5321 A/AAAA fallback means
+    // absence is not proof the domain cannot receive mail.
     return {
-      status: unknown ? 'info' : 'info',
+      status: 'info',
       unknown,
       records: [],
       checks: [{
-        status: unknown ? 'info' : 'info',
+        status: 'info',
         title: unknown ? 'MX lookup inconclusive' : 'No MX record published',
         detail: unknown
           ? `DNS returned ${records.dnsStatus}; absence of MX cannot be concluded.`

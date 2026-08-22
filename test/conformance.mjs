@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
+import net from 'node:net';
 import { spawn } from 'node:child_process';
 
-const port = 8797;
+// A stale dev server left by a crashed or previous run must never answer for
+// this suite, so bind an ephemeral listener to reserve a free port instead of
+// racing every run onto one hard-coded number.
+const port = await new Promise((resolve, reject) => {
+  const probe = net.createServer();
+  probe.once('error', reject);
+  probe.listen(0, '127.0.0.1', () => {
+    const address = probe.address();
+    probe.close(() => resolve(address.port));
+  });
+});
 const base = `http://127.0.0.1:${port}`;
 const worker = spawn('./node_modules/.bin/wrangler', ['dev', '--local', '--host', '127.0.0.1', '--port', String(port)], { stdio: ['ignore', 'pipe', 'pipe'] });
 let postSequence = 0;
