@@ -347,6 +347,7 @@ h1 em { color: var(--accent); font-style: normal; font-weight: 500; }
 .metric strong.good { color: var(--accent); }
 .metric strong.warn { color: var(--warning); }
 .metric strong.poor { color: var(--critical); }
+.metric strong.info { color: var(--info); }
 
 /* Section heading */
 .section-heading {

@@ -292,7 +292,12 @@
   }
 
   function statusClass(status) {
-    return status === "pass" ? "good" : status === "warn" ? "warn" : "poor";
+    // Inconclusive lookups (info) are uncertainty, not failure; only an
+    // actual negative result earns the critical colour.
+    return status === "pass" ? "good"
+      : status === "warn" ? "warn"
+      : status === "info" ? "info"
+      : "poor";
   }
 
   function scoreClassFor(score) {
