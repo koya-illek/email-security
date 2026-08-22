@@ -102,6 +102,13 @@
     });
   }
 
+  // Explicit "smooth" bypasses the CSS prefers-reduced-motion override, so
+  // programmatic scrolls consult the media query themselves.
+  const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  function revealResults(el) {
+    el.scrollIntoView({ behavior: prefersReducedMotion.matches ? "auto" : "smooth", block: "start" });
+  }
+
   // ─── Share + Export buttons ──────────────────────────────────
   $("#copy-share-link")?.addEventListener("click", () => {
     if (lastDomainReport?.id) {
@@ -118,7 +125,7 @@
 
   $("#export-json")?.addEventListener("click", () => {
     if (lastDomainReport?.id) {
-      window.open(`${API_BASE}/api/reports/${lastDomainReport.id}/export`, "_blank");
+      window.open(`${API_BASE}/api/reports/${lastDomainReport.id}/export`, "_blank", "noopener,noreferrer");
     } else if (lastDomainReport) {
       const blob = new Blob([JSON.stringify(lastDomainReport, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -277,7 +284,7 @@
     if (firstDetails) firstDetails.open = true;
 
     domainReport.classList.remove("hidden");
-    domainReport.scrollIntoView({ behavior: "smooth", block: "start" });
+    revealResults(domainReport);
   }
 
   function setShareUnavailable(note, button) {
@@ -1063,7 +1070,7 @@
         updateBatchShareState(d);
         renderBatchTable(d.results);
         batchReport.classList.remove("hidden");
-        batchReport.scrollIntoView({ behavior: "smooth", block: "start" });
+        revealResults(batchReport);
       }
     } catch {
       batchErrorMsg.textContent = "Failed to run batch check";
@@ -1089,7 +1096,7 @@
 
   $("#batch-export")?.addEventListener("click", () => {
     if (lastBatchReport?.id) {
-      window.open(`${API_BASE}/api/reports/${lastBatchReport.id}/export`, "_blank");
+      window.open(`${API_BASE}/api/reports/${lastBatchReport.id}/export`, "_blank", "noopener,noreferrer");
     } else if (lastBatchReport) {
       const blob = new Blob([JSON.stringify(lastBatchReport, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
