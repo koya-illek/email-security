@@ -143,6 +143,13 @@ test('fresh share-link navigation renders domain and batch reports after DOM boo
   await expect(page.locator('#batch-report')).toBeVisible();
   await expect(page.locator('#batch-table')).toContainText('example.com');
   expect(errors).toEqual([]);
+
+  // A pasted batch share link can lose its #batch- prefix; it must still land
+  // on the batch renderer instead of crashing in the domain renderer.
+  await page.goto('/?fresh=batch-bare#abcdef1234567890');
+  await expect(page.locator('#batch-report')).toBeVisible();
+  await expect(page.locator('#batch-table')).toContainText('example.com');
+  expect(errors).toEqual([]);
 });
 
 test('Build records preserves imported SPF providers and blocks unconfirmed removal', async ({ page }) => {

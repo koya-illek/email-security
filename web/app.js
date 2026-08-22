@@ -141,6 +141,14 @@
       if (!r.ok || d.error) {
         showDomainError(d.error);
         selectTool("domain", false);
+      } else if (d._reportType === "batch") {
+        // Share links may lose their #batch- prefix; dispatch on the stored
+        // report type instead of assuming a bare hash is a domain report.
+        lastBatchReport = d;
+        updateBatchShareState(d);
+        renderBatchTable(d.results);
+        batchReport.classList.remove("hidden");
+        selectTool("batch", false);
       } else {
         showDomainResults(d);
       }
@@ -232,7 +240,7 @@
     }
 
     // Metrics
-    const scoreClass = d.overall_score >= 85 ? "good" : d.overall_score >= 70 ? "good" : d.overall_score >= 50 ? "warn" : "poor";
+    const scoreClass = scoreClassFor(d.overall_score);
     domainMetrics.innerHTML = `
       <div class="metric"><small>Security Score</small><strong class="${scoreClass}">${d.overall_score}/100</strong></div>
       <div class="metric"><small>SPF</small><strong class="${statusClass(d.spf.status)}">${esc(d.spf.status)}</strong></div>
@@ -273,6 +281,10 @@
 
   function statusClass(status) {
     return status === "pass" ? "good" : status === "warn" ? "warn" : "poor";
+  }
+
+  function scoreClassFor(score) {
+    return score >= 70 ? "good" : score >= 50 ? "warn" : "poor";
   }
 
   function createResultSection(icon, title, d) {
@@ -404,8 +416,20 @@
   }
 
   function showSpfInspector(d) {
+    const spf = d.spf || {};
+    if (spf.unknown || (spf.status === "info" && !spf.record)) {
+      // DNS trouble is not absence. Publishing a record based on this state
+      // could duplicate a working policy once DNS recovers.
+      const reason = spf.checks?.[0]?.detail || "the lookup could not be completed";
+      showSpfError(`SPF lookup for ${d.domain} was inconclusive (${reason}). Retry after DNS recovers; absence cannot be concluded.`);
+      return;
+    }
     const f = d.flatten;
     if (!f || !f.available) {
+      if (spf.record) {
+        showSpfError(`An SPF record exists for ${d.domain}, but the flattening preview is unavailable right now.`);
+        return;
+      }
       showSpfError("No SPF record was found for " + d.domain);
       return;
     }
@@ -743,18 +767,29 @@
     return { before, after, changes: changes.length ? changes : ["SPF record content changed."] };
   }
 
-  function handleSpfEdit(event) {
-    if (event.target.id !== "spf-safety-confirm" && importedSpf) importedSpf.preserve = false;
-    renderSpfBuilder();
+  function debounce(fn, delay) {
+    let timer = 0;
+    return () => {
+      clearTimeout(timer);
+      timer = setTimeout(fn, delay);
+    };
   }
 
+  const renderSpfBuilderDebounced = debounce(renderSpfBuilder, 500);
+  const renderDmarcBuilderDebounced = debounce(renderDmarcBuilder, 500);
+
   $$("#builder-spf input:not(#spf-safety-confirm), #builder-spf select").forEach((x) => {
-    x.addEventListener("input", handleSpfEdit);
-    x.addEventListener("change", handleSpfEdit);
+    // "change" duplicates "input" for these controls and doubled every
+    // validation request; the render itself is debounced so typing does not
+    // burn the per-minute API quota.
+    x.addEventListener("input", (event) => {
+      if (importedSpf && event.target.id !== "spf-safety-confirm") importedSpf.preserve = false;
+      renderSpfBuilderDebounced();
+    });
   });
-  $("#spf-safety-confirm")?.addEventListener("input", renderSpfBuilder);
+  $("#spf-safety-confirm")?.addEventListener("input", renderSpfBuilderDebounced);
   $$("#builder-dmarc input, #builder-dmarc select").forEach((x) =>
-    x.addEventListener("input", renderDmarcBuilder)
+    x.addEventListener("input", renderDmarcBuilderDebounced)
   );
   renderSpfBuilder();
   renderDmarcBuilder();
@@ -945,20 +980,24 @@
   const batchReport = $("#batch-report");
   const batchTable = $("#batch-table");
   const batchCount = $("#batch-count");
+  // Must match BATCH_MAX_DOMAINS in worker.js: each domain gets an equal
+  // slice of one 45-subrequest DNS budget, so larger batches would return
+  // truncated analyses rather than comparable scores.
+  const BATCH_MAX_DOMAINS_UI = 3;
   let lastBatchReport = null;
   let batchSortCol = null;
   let batchSortDir = 1;
 
   batchInput?.addEventListener("input", () => {
     const lines = batchInput.value.split("\n").map(l => l.trim()).filter(Boolean);
-    batchCount.textContent = `${Math.min(lines.length, 25)} / 25 domains`;
+    batchCount.textContent = `${Math.min(lines.length, BATCH_MAX_DOMAINS_UI)} / ${BATCH_MAX_DOMAINS_UI} domains`;
   });
 
   $("#batch-clear-btn")?.addEventListener("click", () => {
     batchInput.value = "";
     batchReport.classList.add("hidden");
     batchError.classList.add("hidden");
-    batchCount.textContent = "0 / 25 domains";
+    batchCount.textContent = `0 / ${BATCH_MAX_DOMAINS_UI} domains`;
     lastBatchReport = null;
   });
 
@@ -1055,10 +1094,11 @@
     html += "</tr></thead><tbody>";
 
     sorted.forEach(r => {
-      const scoreCls = r.overall_score >= 85 ? "good" : r.overall_score >= 70 ? "good" : r.overall_score >= 50 ? "warn" : "poor";
+      const scoreCls = scoreClassFor(r.overall_score);
+      const truncated = Boolean(r.request_budget?.exhausted);
       html += `<tr data-domain="${esc(r.domain)}">`;
       html += '<td class="domain-cell"><button class="batch-domain-button" type="button" data-domain="' + esc(r.domain) + '">' + esc(r.domain) + '</button></td>';
-      html += `<td class="score-cell"><strong class="${scoreCls}">${r.overall_score}/100</strong></td>`;
+      html += `<td class="score-cell"><strong class="${scoreCls}">${r.overall_score}/100</strong>${truncated ? ' <span class="batch-status info">partial</span>' : ""}</td>`;
       html += `<td>${batchStatusCell(r.spf)}</td>`;
       html += `<td>${batchStatusCell(r.dkim)}</td>`;
       html += `<td>${batchStatusCell(r.dmarc)}</td>`;
@@ -1068,6 +1108,7 @@
     });
     html += "</tbody>";
     batchTable.innerHTML = html;
+    updateBatchBudgetNote(results);
 
     // Sort handlers
     batchTable.querySelectorAll(".sort-button[data-col]").forEach(button => {
@@ -1090,6 +1131,21 @@
         }
       });
     });
+  }
+
+  function updateBatchBudgetNote(results) {
+    const note = $("#batch-budget-note");
+    if (!note) return;
+    const truncated = (results || []).filter(r => r.request_budget?.exhausted);
+    if (truncated.length) {
+      const who = truncated.length === 1
+        ? truncated[0].domain
+        : `${truncated.length} domains`;
+      note.textContent = `${who} hit the DNS subrequest budget. Scores marked "partial" are incomplete and can look lower than reality; re-run them as single checks for full evidence.`;
+      note.classList.remove("hidden");
+    } else {
+      note.classList.add("hidden");
+    }
   }
 
   function updateBatchShareState(report) {

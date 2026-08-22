@@ -119,19 +119,19 @@
       <div class="section-heading">
         <div>
           <span class="section-number">BTCH</span>
-          <div><h3>Batch Domain Check</h3><p>Compare email security posture across up to 25 domains at once.</p></div>
+          <div><h3>Batch Domain Check</h3><p>Compare email security posture across up to 3 domains, each with a fair share of the DNS lookup budget.</p></div>
         </div>
         <span class="evidence-badge">DNS OBSERVATION</span>
       </div>
       <form class="trace-form" id="batch-form">
-        <label for="batch-input">Domains (one per line, max 25)</label>
+        <label for="batch-input">Domains (one per line, max 3)</label>
         <div class="batch-input-shell">
           <textarea id="batch-input" placeholder="example.com&#10;anotherdomain.org&#10;thirddomain.net" rows="8" spellcheck="false" inputmode="url"></textarea>
         </div>
         <div class="form-meta">
           <span>SPF, DKIM, DMARC, MX, Transport compared</span>
           <span>5 concurrent checks</span>
-          <span id="batch-count">0 / 25 domains</span>
+          <span id="batch-count">0 / 3 domains</span>
         </div>
         <div class="header-actions" style="margin-top:16px">
           <button type="submit" class="primary-button" id="batch-button">Check All Domains</button>
@@ -166,6 +166,7 @@
         <div class="batch-table-wrap">
           <table class="batch-table" id="batch-table"></table>
         </div>
+        <p class="share-note warning hidden" id="batch-budget-note" role="status"></p>
       </section>
     </section>
 
@@ -339,7 +340,7 @@
           <textarea class="header-input" id="header-input" placeholder="Paste the original headers from your mailbox provider…" spellcheck="false" aria-describedby="header-privacy"></textarea>
           <div class="privacy-note" id="header-privacy">
             <strong>Stateless analysis.</strong>
-            <span>Headers are sent to this Cloudflare Worker for this request only; this application does not store them. Hop enrichment separately submits up to 10 public IP addresses for PTR lookup.</span>
+            <span>Headers are sent to this Cloudflare Worker for this request only; this application does not store them. Only the domain and batch workflows persist anything (shareable reports, auto-deleted after 14 days), and hop enrichment separately submits up to 10 public IP addresses for PTR lookup.</span>
           </div>
           <div class="header-actions">
             <button type="button" class="primary-button" id="analyze-headers-btn">Analyze Headers</button>
@@ -400,7 +401,7 @@
     <button class="dialog-close" id="dialog-close" type="button" aria-label="Close">×</button>
     <h2 id="method-dialog-title">What this tool measures</h2>
     <div class="method-list">
-      <article><span>DNS</span><div><h3>DNS observation</h3><p>SPF, DKIM, DMARC, MX, and CAA records resolved via DNS-over-HTTPS. Transport security checks MTA-STS and TLS-RPT policies. Batch checks run up to 25 domains in parallel.</p></div></article>
+      <article><span>DNS</span><div><h3>DNS observation</h3><p>SPF, DKIM, DMARC, MX, and CAA records resolved via DNS-over-HTTPS. Transport security checks MTA-STS and TLS-RPT policies. Batch checks compare up to 3 domains.</p></div></article>
       <article><span>HDR</span><div><h3>Header evidence</h3><p>Header analysis parses Authentication-Results claims, Received-SPF results, DKIM-Signature field shape, message addresses, and Received hops. It does not independently verify a DKIM signature or re-run authentication.</p></div></article>
       <article><span>ƒ(x)</span><div><h3>Derived finding</h3><p>Interpretation of DNS records and header evidence, with recommendations grounded in published RFCs and current best practice. Reports can be read for up to 14 days; expired rows are removed by an hourly cleanup, and expired links stop working immediately.</p></div></article>
     </div>
