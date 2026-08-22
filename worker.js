@@ -31,7 +31,11 @@ const STANDARD_RATE_LIMITER_BINDING = 'STANDARD_RATE_LIMITER';
 const EXPENSIVE_RATE_LIMITER_BINDING = 'EXPENSIVE_RATE_LIMITER';
 const REPORT_RETENTION_DAYS = 14;
 const REPORT_ID_RE = /^[A-Za-z0-9_-]{16}$/;
-const BATCH_MAX_DOMAINS = 25;
+// Batch rows share one platform subrequest cap, so each domain only receives
+// an even slice of the 45-subrequest budget. Live verification showed four
+// well-configured domains exhausted the whole budget and later rows scored
+// falsely "poor"; three domains is the realistic ceiling for honest scores.
+const BATCH_MAX_DOMAINS = 3;
 const BATCH_CONCURRENCY = 5;
 const EXPENSIVE_POST_PATHS = new Set([
   '/api/check',
@@ -192,16 +196,22 @@ function validateBatchDomains(domains) {
   return { accepted, rejected };
 }
 
-async function createBatchReport(domains, env, budget = createRequestBudget()) {
+async function createBatchReport(domains, env, requestBudget = null) {
   const validation = validateBatchDomains(domains);
   const uniqueDomains = validation.accepted;
   if (!uniqueDomains.length) throw new InvalidRequestError('At least one valid public domain is required');
+  // Every analysis draws from the same platform subrequest cap, so a single
+  // shared budget let early domains starve later ones. Slice the budget
+  // evenly instead and carry each row's own snapshot so a truncated analysis
+  // stays visible instead of reading as a legitimate low score.
+  const perDomainLimit = Math.max(1, Math.floor(REQUEST_SUBREQUEST_LIMIT / uniqueDomains.length));
   const results = [];
   for (let index = 0; index < uniqueDomains.length; index += BATCH_CONCURRENCY) {
     const chunk = uniqueDomains.slice(index, index + BATCH_CONCURRENCY);
     const chunkResults = await Promise.all(chunk.map(async domain => {
+      const domainBudget = createRequestBudget(perDomainLimit);
       try {
-        const report = await analyzeDomain(domain, budget);
+        const report = await analyzeDomain(domain, domainBudget);
         return {
           domain, overall_score: report.overall_score, overall_status: report.overall_status,
           spf: { status: report.spf.status, record: report.spf.record || null },
@@ -209,21 +219,29 @@ async function createBatchReport(domains, env, budget = createRequestBudget()) {
           dmarc: { status: report.dmarc.status, policy: report.dmarc.policy || null },
           mx: { status: report.mx.status, records: (report.mx.records || []).map(record => record.host) },
           transport: { status: report.transport?.status || 'info' },
+          request_budget: domainBudget.snapshot(),
         };
       } catch (error) {
         return {
           domain, overall_score: 0, overall_status: 'error', error: error.message,
           spf: { status: 'fail' }, dkim: { status: 'warn' }, dmarc: { status: 'fail' },
           mx: { status: 'fail' }, transport: { status: 'info' },
+          request_budget: domainBudget.snapshot(),
         };
       }
     }));
     results.push(...chunkResults);
   }
+  const usedSubrequests = results.reduce((total, row) => total + (row.request_budget?.used || 0), 0);
   const report = {
     _reportType: 'batch', domains: uniqueDomains, results, created_at: new Date().toISOString(),
-    source_revision: budget.sourceRevision || 'unknown',
-    validation, request_budget: budget.snapshot()
+    source_revision: requestBudget?.sourceRevision || 'unknown',
+    validation, request_budget: {
+      limit: REQUEST_SUBREQUEST_LIMIT,
+      per_domain_limit: perDomainLimit,
+      used: usedSubrequests,
+      exhausted: results.some(row => row.request_budget?.exhausted)
+    }
   };
   const reportId = await storeReport(env, report);
   if (reportId) report.id = reportId;
@@ -372,6 +390,11 @@ async function handleRequest(request, env) {
     try {
       const dailySuccess = await consumeDailyRateLimit(request, env, 'post', Number(env.DAILY_POST_LIMIT) || 500);
       if (!dailySuccess) return jsonResponse({ error: 'Daily API request limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(DAILY_RATE_LIMIT_RETRY_AFTER_SECONDS) });
+    } catch {
+      // A D1 outage must not take stateless endpoints down with report
+      // storage; degrade to the per-minute limiter below only.
+    }
+    try {
       retryAfter = await consumePostRateLimit(request, url.pathname, env);
     } catch {
       return jsonResponse({ error: 'Rate limiting is unavailable.' }, 503, corsHeaders);

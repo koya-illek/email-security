@@ -17,7 +17,7 @@ The service supports four related workflows:
 - SPF and DMARC record validation plus review-ready record construction
 - Stateless interpretation of pasted message headers with optional public-IP hop enrichment
 
-It also compares up to 25 domains, stores optional shareable reports, exports JSON, and exposes its complete read-only capability through REST and nine MCP tools.
+It also compares up to 3 domains, stores optional shareable reports, exports JSON, and exposes its complete read-only capability through REST and nine MCP tools.
 
 ## System context
 
@@ -87,7 +87,7 @@ The core is currently a single Worker module. The internal separation is logical
 | --- | --- |
 | `POST /api/v2/domain-check` | Complete domain posture analysis |
 | `POST /api/v2/header-analysis` | Stateless header interpretation |
-| `POST /api/batch` | Compare up to 25 domains |
+| `POST /api/batch` | Compare up to 3 domains with per-domain budget slices |
 | `POST /api/spf/inspect` | Recursive SPF inspection and flattening proof |
 | `POST /api/spf/evaluate` | SPF evaluation for client IP, sender, and HELO |
 | `POST /api/records/validate` | Validate proposed SPF or DMARC |

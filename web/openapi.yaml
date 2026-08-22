@@ -105,12 +105,12 @@ paths:
   /api/batch:
     post:
       operationId: analyzeEmailDomainsBatch
-      summary: Compare email-security posture across up to 25 domains
+      summary: Compare email-security posture across up to 3 domains
       requestBody:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, required: [domains], properties: { domains: { type: array, minItems: 1, maxItems: 25, uniqueItems: true, items: { type: string, maxLength: 253 } } } }
+            schema: { type: object, additionalProperties: false, required: [domains], properties: { domains: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, items: { type: string, maxLength: 253 } } } }
             example: { domains: [example.com, example.org] }
       responses:
         '200': { description: Batch comparison report, content: { application/json: { schema: { $ref: '#/components/schemas/BatchReport' } } } }
