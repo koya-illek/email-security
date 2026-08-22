@@ -1202,11 +1202,15 @@
     html += "</tr></thead><tbody>";
 
     sorted.forEach(r => {
-      const scoreCls = scoreClassFor(r.overall_score);
       const truncated = Boolean(r.request_budget?.exhausted);
       html += `<tr data-domain="${esc(r.domain)}">`;
       html += '<td class="domain-cell"><button class="batch-domain-button" type="button" data-domain="' + esc(r.domain) + '">' + esc(r.domain) + '</button></td>';
-      html += `<td class="score-cell"><strong class="${scoreCls}">${r.overall_score}/100</strong>${truncated ? ' <span class="batch-status info">partial</span>' : ""}</td>`;
+      // An errored row is not a scored row; showing 0/100 would present an
+      // internal failure as a failing domain.
+      const scoreCell = r.overall_status === "error"
+        ? `<span class="batch-status info" title="${esc(r.error || "Analysis failed")}">error</span>`
+        : `<strong class="${scoreClassFor(r.overall_score)}">${r.overall_score}/100</strong>${truncated ? ' <span class="batch-status info">partial</span>' : ""}`;
+      html += `<td class="score-cell">${scoreCell}</td>`;
       html += `<td>${batchStatusCell(r.spf)}</td>`;
       html += `<td>${batchStatusCell(r.dkim)}</td>`;
       html += `<td>${batchStatusCell(r.dmarc)}</td>`;

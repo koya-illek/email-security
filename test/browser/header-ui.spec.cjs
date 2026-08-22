@@ -193,6 +193,42 @@ test('batch results disclose lines the API refused', async ({ page }) => {
   await expect(note).toContainText('"bad..example.com" (Invalid public domain)');
 });
 
+test('an errored batch row reads as an error, not as a failing domain', async ({ page }) => {
+  await page.route('**/api/batch', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      _reportType: 'batch',
+      domains: ['broken.example'],
+      results: [{
+        domain: 'broken.example',
+        overall_score: 0,
+        overall_status: 'error',
+        error: 'Analysis failed unexpectedly',
+        // An error is not evidence; controls arrive inconclusive.
+        spf: { status: 'info' }, dkim: { status: 'info' }, dmarc: { status: 'info' },
+        mx: { status: 'info' }, transport: { status: 'info' }
+      }],
+      created_at: '2026-08-22T00:00:00.000Z',
+      validation: { accepted: ['broken.example'], rejected: [] },
+      request_budget: { limit: 45, per_domain_limit: 15, used: 0, exhausted: false },
+      share: { available: false }
+    })
+  }));
+
+  await page.goto('/#batch');
+  await page.getByLabel('Domains (one per line, max 3)').fill('broken.example');
+  await page.getByRole('button', { name: 'Check All Domains' }).click();
+
+  const row = page.locator('#batch-table tbody tr').filter({ hasText: 'broken.example' });
+  await expect(row).toBeVisible();
+  const scoreCell = row.locator('.score-cell');
+  await expect(scoreCell).toContainText('error');
+  await expect(scoreCell).not.toContainText('/100');
+  await expect(scoreCell.locator('[title="Analysis failed unexpectedly"]')).toBeVisible();
+  await expect(row).not.toContainText('Fail');
+});
+
 test('an untouched Record Builder spends no validation quota until input arrives', async ({ page }) => {
   let validateCalls = 0;
   await page.route('**/api/records/validate', route => {
