@@ -269,6 +269,7 @@ h1 em { color: var(--accent); font-style: normal; font-weight: 500; }
   font: 400 12px/1.5 var(--mono);
 }
 .form-meta span::before { content: "·"; color: var(--accent); margin-right: 8px; }
+.form-meta .over-limit { color: var(--warning); }
 
 /* Loading */
 .loading-panel {

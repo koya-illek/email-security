@@ -995,14 +995,22 @@
 
   batchInput?.addEventListener("input", () => {
     const lines = batchInput.value.split("\n").map(l => l.trim()).filter(Boolean);
-    batchCount.textContent = `${Math.min(lines.length, BATCH_MAX_DOMAINS_UI)} / ${BATCH_MAX_DOMAINS_UI} domains`;
+    updateBatchCount(lines.length);
   });
+
+  function updateBatchCount(count) {
+    const extra = count - BATCH_MAX_DOMAINS_UI;
+    const over = extra > 0;
+    batchCount.textContent = `${Math.min(count, BATCH_MAX_DOMAINS_UI)} / ${BATCH_MAX_DOMAINS_UI} domains` +
+      (over ? ` — ${extra} extra line${extra === 1 ? "" : "s"} rejected` : "");
+    batchCount.classList.toggle("over-limit", over);
+  }
 
   $("#batch-clear-btn")?.addEventListener("click", () => {
     batchInput.value = "";
     batchReport.classList.add("hidden");
     batchError.classList.add("hidden");
-    batchCount.textContent = `0 / ${BATCH_MAX_DOMAINS_UI} domains`;
+    updateBatchCount(0);
     lastBatchReport = null;
   });
 
@@ -1010,6 +1018,13 @@
     e.preventDefault();
     const domains = batchInput.value.split("\n").map(l => l.trim()).filter(Boolean);
     if (!domains.length) return;
+    if (domains.length > BATCH_MAX_DOMAINS_UI) {
+      // Rejecting here avoids spending rate-limit quota on a request the
+      // server is guaranteed to refuse.
+      batchErrorMsg.textContent = `A batch may contain at most ${BATCH_MAX_DOMAINS_UI} domains; trim the list and retry.`;
+      batchError.classList.remove("hidden");
+      return;
+    }
 
     batchLoading.classList.remove("hidden");
     batchError.classList.add("hidden");
