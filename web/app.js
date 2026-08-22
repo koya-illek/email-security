@@ -540,7 +540,7 @@
     button.onclick = () => copyText(record);
   }
 
-  async function renderSpfBuilder() {
+  function renderSpfBuilder() {
     const sequence = ++spfValidationSequence;
     const selected = [...$$("#provider-options input:checked")].map((x) => x.value);
     const raw = $("#spf-custom").value.trim().split(/\s+/).filter(Boolean);
@@ -611,22 +611,35 @@
       safetyNotice.textContent = "No sending mechanisms are selected. An empty -all record rejects every sender.";
     }
 
-    try {
-      const r = await fetch(`${API_BASE}/api/records/validate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "spf", domain, record }),
-      });
-      const validation = await r.json();
-      if (sequence !== spfValidationSequence) return;
-      showValidation(root, validation, extra, record, "spf");
-    } catch {
-      if (sequence === spfValidationSequence)
-        showValidation(root, { errors: ["Validation service could not confirm this record."], warnings: [] }, extra, record, "spf");
-    }
+    scheduleSpfValidation(sequence, root, extra, domain, record);
   }
 
-  async function renderDmarcBuilder() {
+  const VALIDATION_DEBOUNCE_MS = 500;
+  let spfValidationTimer = 0;
+  let dmarcValidationTimer = 0;
+
+  function scheduleSpfValidation(sequence, root, extra, domain, record) {
+    // Only the validation POST is debounced; the rest of the render stays
+    // synchronous so safety-state resets keep their event ordering.
+    clearTimeout(spfValidationTimer);
+    spfValidationTimer = setTimeout(async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/records/validate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "spf", domain, record }),
+        });
+        const validation = await r.json();
+        if (sequence !== spfValidationSequence) return;
+        showValidation(root, validation, extra, record, "spf");
+      } catch {
+        if (sequence === spfValidationSequence)
+          showValidation(root, { errors: ["Validation service could not confirm this record."], warnings: [] }, extra, record, "spf");
+      }
+    }, VALIDATION_DEBOUNCE_MS);
+  }
+
+  function renderDmarcBuilder() {
     const sequence = ++dmarcValidationSequence;
     const domain = $("#dmarc-domain").value.trim();
     const policy = $("#dmarc-stage").value;
@@ -652,19 +665,22 @@
     const extra = [];
     if (!validBuilderDomain(domain)) extra.push("Enter a valid domain before copying.");
 
-    try {
-      const r = await fetch(`${API_BASE}/api/records/validate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "dmarc", domain, record }),
-      });
-      const validation = await r.json();
-      if (sequence !== dmarcValidationSequence) return;
-      showValidation(root, validation, extra, record, "dmarc");
-    } catch {
-      if (sequence === dmarcValidationSequence)
-        showValidation(root, { errors: ["Validation service could not confirm this record."], warnings: [] }, extra, record, "dmarc");
-    }
+    clearTimeout(dmarcValidationTimer);
+    dmarcValidationTimer = setTimeout(async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/records/validate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "dmarc", domain, record }),
+        });
+        const validation = await r.json();
+        if (sequence !== dmarcValidationSequence) return;
+        showValidation(root, validation, extra, record, "dmarc");
+      } catch {
+        if (sequence === dmarcValidationSequence)
+          showValidation(root, { errors: ["Validation service could not confirm this record."], warnings: [] }, extra, record, "dmarc");
+      }
+    }, VALIDATION_DEBOUNCE_MS);
   }
 
   function prefillSpfBuilder(domain, record) {
@@ -767,29 +783,18 @@
     return { before, after, changes: changes.length ? changes : ["SPF record content changed."] };
   }
 
-  function debounce(fn, delay) {
-    let timer = 0;
-    return () => {
-      clearTimeout(timer);
-      timer = setTimeout(fn, delay);
-    };
-  }
-
-  const renderSpfBuilderDebounced = debounce(renderSpfBuilder, 500);
-  const renderDmarcBuilderDebounced = debounce(renderDmarcBuilder, 500);
-
   $$("#builder-spf input:not(#spf-safety-confirm), #builder-spf select").forEach((x) => {
-    // "change" duplicates "input" for these controls and doubled every
-    // validation request; the render itself is debounced so typing does not
-    // burn the per-minute API quota.
+    // "change" duplicates "input" for these controls; binding both doubled
+    // every validation request. The POST itself is debounced so typing does
+    // not burn the per-minute API quota.
     x.addEventListener("input", (event) => {
       if (importedSpf && event.target.id !== "spf-safety-confirm") importedSpf.preserve = false;
-      renderSpfBuilderDebounced();
+      renderSpfBuilder();
     });
   });
-  $("#spf-safety-confirm")?.addEventListener("input", renderSpfBuilderDebounced);
+  $("#spf-safety-confirm")?.addEventListener("input", renderSpfBuilder);
   $$("#builder-dmarc input, #builder-dmarc select").forEach((x) =>
-    x.addEventListener("input", renderDmarcBuilderDebounced)
+    x.addEventListener("input", renderDmarcBuilder)
   );
   renderSpfBuilder();
   renderDmarcBuilder();
