@@ -131,17 +131,22 @@
   });
 
   // ─── Load shared report from D1 ───────────────────────────────
-  async function loadSharedReport(reportId) {
-    domainLoading.classList.remove("hidden");
-    domainError.classList.add("hidden");
-    domainReport.classList.add("hidden");
+  async function loadSharedReport(reportId, options = {}) {
+    // The #batch- prefix is a hint for which panel owns failures and the
+    // loading spinner; success always dispatches on the stored _reportType.
+    const preferBatch = options.prefer === "batch";
+    const loadingPanel = preferBatch ? batchLoading : domainLoading;
+    const errorPanel = preferBatch ? batchError : domainError;
+    const reportPanel = preferBatch ? batchReport : domainReport;
+    errorPanel.classList.add("hidden");
+    reportPanel.classList.add("hidden");
+    loadingPanel.classList.remove("hidden");
+    if (preferBatch) selectTool("batch", false);
     try {
       const r = await fetch(`${API_BASE}/api/reports/${reportId}`);
       const d = await r.json();
-      if (!r.ok || d.error) {
-        showDomainError(d.error);
-        selectTool("domain", false);
-      } else if (d._reportType === "batch") {
+      if (!r.ok || d.error) throw new Error(d.error || "Report not found or expired");
+      if (d._reportType === "batch") {
         // Share links may lose their #batch- prefix; dispatch on the stored
         // report type instead of assuming a bare hash is a domain report.
         lastBatchReport = d;
@@ -152,11 +157,18 @@
       } else {
         showDomainResults(d);
       }
-    } catch {
-      showDomainError("Failed to load shared report");
-      selectTool("domain", false);
+    } catch (err) {
+      const message = err?.message || "Failed to load shared report";
+      if (preferBatch) {
+        batchErrorMsg.textContent = message;
+        batchError.classList.remove("hidden");
+        selectTool("batch", false);
+      } else {
+        showDomainError(message);
+        selectTool("domain", false);
+      }
     } finally {
-      domainLoading.classList.add("hidden");
+      loadingPanel.classList.add("hidden");
     }
   }
 
@@ -1194,21 +1206,7 @@
   // Check for batch report in URL hash (#batch-<id>)
   const batchHashMatch = location.hash.match(/^#batch-([A-Za-z0-9_-]{16})$/);
   if (batchHashMatch) {
-    (async () => {
-      selectTool("batch", false);
-      batchLoading.classList.remove("hidden");
-      try {
-        const r = await fetch(`${API_BASE}/api/reports/${batchHashMatch[1]}`);
-        const d = await r.json();
-        if (!d.error) {
-          lastBatchReport = d;
-          updateBatchShareState(d);
-          renderBatchTable(d.results);
-          batchReport.classList.remove("hidden");
-        }
-      } catch {}
-      finally { batchLoading.classList.add("hidden"); }
-    })();
+    queueMicrotask(() => loadSharedReport(batchHashMatch[1], { prefer: "batch" }));
   }
 
 })();

@@ -152,6 +152,18 @@ test('fresh share-link navigation renders domain and batch reports after DOM boo
   expect(errors).toEqual([]);
 });
 
+test('a dead #batch- share link explains itself inside the batch panel', async ({ page }) => {
+  await page.route('**/api/reports/dead0000dead0000', route => route.fulfill({
+    status: 404,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: 'Report not found or expired' })
+  }));
+
+  await page.goto('/#batch-dead0000dead0000');
+  await expect(page.locator('#batch-error')).toBeVisible();
+  await expect(page.locator('#batch-error-msg')).toContainText('Report not found or expired');
+});
+
 test('Build records preserves imported SPF providers and blocks unconfirmed removal', async ({ page }) => {
   const report = {
     domain: 'example.com',
