@@ -109,6 +109,15 @@
     el.scrollIntoView({ behavior: prefersReducedMotion.matches ? "auto" : "smooth", block: "start" });
   }
 
+  // Numeric-only dates ("9/5/2026") are ambiguous across locales; a bearer
+  // link's expiry must read the same way for everyone.
+  function longDate(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? ""
+      : date.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+  }
+
   // ─── Share + Export buttons ──────────────────────────────────
   $("#copy-share-link")?.addEventListener("click", () => {
     if (lastDomainReport?.id) {
@@ -151,7 +160,14 @@
     if (preferBatch) selectTool("batch", false);
     try {
       const r = await fetch(`${API_BASE}/api/reports/${reportId}`);
-      const d = await r.json();
+      let d;
+      try {
+        d = await r.json();
+      } catch {
+        // A non-JSON failure body (for example an HTML error page) should not
+        // surface as a raw JSON-parse message.
+        throw new Error("The report service returned an unreadable response.");
+      }
       if (!r.ok || d.error) throw new Error(d.error || "Report not found or expired");
       if (d._reportType === "batch") {
         // Share links may lose their #batch- prefix; dispatch on the stored
@@ -159,6 +175,7 @@
         lastBatchReport = d;
         updateBatchShareState(d);
         renderBatchTable(d.results);
+        updateBatchRejectedNote(d.validation);
         batchReport.classList.remove("hidden");
         selectTool("batch", false);
       } else {
@@ -250,7 +267,7 @@
     confidenceNote.textContent = `Score confidence: ${d.score_confidence || "unknown"}. ${unknownControls.length ? `Inconclusive controls: ${unknownControls.join(", ")}. Retry before changing DNS.` : "All scored controls returned a determinate observation."}`;
     confidenceNote.classList.toggle("warning", unknownControls.length > 0);
     if (d.share?.available && d.share.expiresAt) {
-      shareNote.textContent = `Public bearer link. Anyone with the link can view this report until ${new Date(d.share.expiresAt).toLocaleDateString()}; report responses are not cached by browsers or intermediaries.`;
+      shareNote.textContent = `Public bearer link. Anyone with the link can view this report until ${longDate(d.share.expiresAt)}; report responses are not cached by browsers or intermediaries.`;
       shareNote.classList.remove("warning");
       shareButton.disabled = false;
       shareButton.textContent = "Copy share link";
@@ -468,6 +485,28 @@
     `;
 
     let html = "";
+    // Qualitative findings from the inspection itself (multiple records,
+    // ptr mechanisms, permissive all) are easy to miss when the flattening
+    // preview below looks healthy. Render them first when they matter.
+    if ((spf.status === "fail" || spf.status === "warn") && Array.isArray(spf.checks) && spf.checks.length) {
+      html += `<details class="collapsible-section" open>
+        <summary>
+          <span class="cs-icon">SPF</span>
+          <span class="cs-title">Inspection findings</span>
+          <span class="cs-count ${esc(spf.status)}">${esc(spf.status)}</span>
+        </summary>
+        <div class="cs-body">
+          ${spf.checks.map((x) => `<div class="check-item ${esc(x.status)}">
+            <div class="check-dot"></div>
+            <div class="check-content">
+              <div class="check-title">${esc(x.title)}</div>
+              <div class="check-detail">${esc(x.detail)}</div>
+              ${x.recommendation ? `<div class="check-recommendation"><strong>Recommendation</strong>${esc(x.recommendation)}</div>` : ""}
+            </div>
+          </div>`).join("")}
+        </div>
+      </details>`;
+    }
     html += `<div class="output-card">
       <div class="output-head"><strong>Current SPF record</strong><button class="copy-btn" data-copy="original">Copy</button></div>
       <div class="dns-value">${esc(f.originalRecord)}</div>
@@ -635,6 +674,19 @@
       safetyNotice.textContent = "No sending mechanisms are selected. An empty -all record rejects every sender.";
     }
 
+    // A pristine builder (no domain, no mechanisms, no import) has nothing to
+    // validate. Skipping the POST here stops every page view from spending
+    // validation quota and two daily-counter writes before the Record Builder
+    // is ever opened; the first input resumes the normal debounced flow.
+    if (!domain && !terms.length && !importedSpf) {
+      const button = root.querySelector(".copy-btn");
+      if (button) {
+        button.textContent = "Enter a domain to validate";
+        button.disabled = true;
+      }
+      return;
+    }
+
     scheduleSpfValidation(sequence, root, extra, domain, record);
   }
 
@@ -688,6 +740,16 @@
 
     const extra = [];
     if (!validBuilderDomain(domain)) extra.push("Enter a valid domain before copying.");
+
+    if (!domain && !rua) {
+      // Idle DMARC planner: same quota rationale as the idle SPF builder.
+      const button = root.querySelector(".copy-btn");
+      if (button) {
+        button.textContent = "Enter a domain to validate";
+        button.disabled = true;
+      }
+      return;
+    }
 
     clearTimeout(dmarcValidationTimer);
     dmarcValidationTimer = setTimeout(async () => {
@@ -1034,6 +1096,7 @@
     batchInput.value = "";
     batchReport.classList.add("hidden");
     batchError.classList.add("hidden");
+    $("#batch-rejected-note")?.classList.add("hidden");
     updateBatchCount(0);
     lastBatchReport = null;
   });
@@ -1069,6 +1132,7 @@
         lastBatchReport = d;
         updateBatchShareState(d);
         renderBatchTable(d.results);
+        updateBatchRejectedNote(d.validation);
         batchReport.classList.remove("hidden");
         revealResults(batchReport);
       }
@@ -1192,11 +1256,26 @@
     }
   }
 
+  function updateBatchRejectedNote(validation) {
+    // The API refuses invalid, duplicate, or over-limit lines while still
+    // scoring the rest; without this note those lines vanish silently.
+    const note = $("#batch-rejected-note");
+    if (!note) return;
+    const rejected = Array.isArray(validation?.rejected) ? validation.rejected : [];
+    if (!rejected.length) {
+      note.classList.add("hidden");
+      return;
+    }
+    const items = rejected.map(item => `"${item.input ?? "(blank)"}" (${item.error || "rejected"})`);
+    note.textContent = `${rejected.length} line${rejected.length === 1 ? " was" : "s were"} not checked: ${items.join("; ")}. The table below covers the accepted domains only.`;
+    note.classList.remove("hidden");
+  }
+
   function updateBatchShareState(report) {
     const note = $("#batch-share-note");
     const button = $("#batch-copy-link");
     if (report?.share?.available && report.share.expiresAt) {
-      note.textContent = `Public bearer link. Anyone with the link can view this batch report until ${new Date(report.share.expiresAt).toLocaleDateString()}; report responses are not cached by browsers or intermediaries.`;
+      note.textContent = `Public bearer link. Anyone with the link can view this batch report until ${longDate(report.share.expiresAt)}; report responses are not cached by browsers or intermediaries.`;
       note.classList.remove("warning");
       button.disabled = false;
       button.textContent = "Copy share link";
