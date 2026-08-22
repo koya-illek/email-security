@@ -164,6 +164,56 @@ test('a dead #batch- share link explains itself inside the batch panel', async (
   await expect(page.locator('#batch-error-msg')).toContainText('Report not found or expired');
 });
 
+test('batch results disclose lines the API refused', async ({ page }) => {
+  await page.route('**/api/batch', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      _reportType: 'batch',
+      domains: ['example.com'],
+      results: [{ domain: 'example.com', overall_score: 70, overall_status: 'good', spf: { status: 'pass' }, dkim: { status: 'warn' }, dmarc: { status: 'warn' }, mx: { status: 'pass' }, transport: { status: 'info' } }],
+      created_at: '2026-08-22T00:00:00.000Z',
+      validation: {
+        accepted: ['example.com'],
+        rejected: [{ index: 1, input: 'bad..example.com', error: 'Invalid public domain' }]
+      },
+      request_budget: { limit: 45, per_domain_limit: 15, used: 5, exhausted: false },
+      share: { available: false }
+    })
+  }));
+
+  await page.goto('/#batch');
+  await page.getByLabel('Domains (one per line, max 3)').fill('example.com\nbad..example.com');
+  await page.getByRole('button', { name: 'Check All Domains' }).click();
+
+  await expect(page.locator('#batch-report')).toBeVisible();
+  const note = page.locator('#batch-rejected-note');
+  await expect(note).toBeVisible();
+  await expect(note).toContainText('1 line was not checked');
+  await expect(note).toContainText('"bad..example.com" (Invalid public domain)');
+});
+
+test('an untouched Record Builder spends no validation quota until input arrives', async ({ page }) => {
+  let validateCalls = 0;
+  await page.route('**/api/records/validate', route => {
+    validateCalls++;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ valid: true, errors: [], warnings: [], lookupCount: 0, characterCount: 12 })
+    });
+  });
+
+  await page.goto('/#builder');
+  const copyButton = page.locator('#spf-builder-output .copy-btn');
+  await expect(copyButton).toHaveText('Enter a domain to validate');
+  await expect(copyButton).toBeDisabled();
+  await page.waitForTimeout(700); // outlasts the 500ms validation debounce
+
+  await page.locator('#builder-domain').fill('example.com');
+  await expect.poll(() => validateCalls).toBeGreaterThan(0);
+});
+
 test('Build records preserves imported SPF providers and blocks unconfirmed removal', async ({ page }) => {
   const report = {
     domain: 'example.com',
