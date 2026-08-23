@@ -225,11 +225,11 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain }),
       });
-      const d = await r.json();
+      const d = await parseApiResponse(r, "domain check");
       if (d.error) showDomainError(d.error);
       else showDomainResults(d);
-    } catch {
-      showDomainError("Failed to analyze domain");
+    } catch (err) {
+      showDomainError(err.message || "Failed to analyze domain");
     } finally {
       domainLoading.classList.add("hidden");
       checkButton.disabled = false;
@@ -444,11 +444,11 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain }),
       });
-      const d = await r.json();
+      const d = await parseApiResponse(r, "SPF inspection");
       if (d.error) showSpfError(d.error);
       else showSpfInspector(d);
-    } catch {
-      showSpfError("Failed to inspect SPF");
+    } catch (err) {
+      showSpfError(err.message || "Failed to inspect SPF");
     } finally {
       spfLoading.classList.add("hidden");
       spfButton.disabled = false;
@@ -1141,7 +1141,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domains })
       });
-      const d = await r.json();
+      const d = await parseApiResponse(r, "batch check");
       if (d.error) {
         batchErrorMsg.textContent = d.error;
         batchError.classList.remove("hidden");
@@ -1153,8 +1153,8 @@
         batchReport.classList.remove("hidden");
         revealResults(batchReport);
       }
-    } catch {
-      batchErrorMsg.textContent = "Failed to run batch check";
+    } catch (err) {
+      batchErrorMsg.textContent = err.message || "Failed to run batch check";
       batchError.classList.remove("hidden");
     } finally {
       batchLoading.classList.add("hidden");

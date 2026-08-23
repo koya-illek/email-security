@@ -505,3 +505,40 @@ test('hop enrichment also reports an unreadable service answer readably', async 
   await expect(msg).toContainText('unreadable');
   await expect(msg).not.toContainText('Unexpected');
 });
+
+test('domain, batch, and SPF panels describe an unreadable service answer instead of generic failure copy', async ({ page }) => {
+  // The same edge/HTML-failure shape as the header panels, but on the three
+  // handlers that used to swallow it into "Failed to …" catch-all copy.
+  const htmlFailure = {
+    status: 502,
+    contentType: 'text/html',
+    body: '<!DOCTYPE html><html><body>bad gateway</body></html>'
+  };
+  await page.route('**/api/check', route => route.fulfill(htmlFailure));
+  await page.route('**/api/batch', route => route.fulfill(htmlFailure));
+  await page.route('**/api/spf/inspect', route => route.fulfill(htmlFailure));
+
+  await page.goto('/');
+  await page.getByLabel('Domain to check').fill('example.com');
+  await page.getByRole('button', { name: 'Check security' }).click();
+  const domainMsg = page.locator('#domain-error-msg');
+  await expect(domainMsg).toContainText('unreadable');
+  await expect(domainMsg).not.toContainText('Unexpected');
+  await expect(domainMsg).not.toContainText('Failed to analyze domain');
+
+  await page.goto('/?fresh=batch#batch');
+  await page.getByLabel('Domains (one per line, max 3)').fill('example.com');
+  await page.getByRole('button', { name: 'Check All Domains' }).click();
+  const batchMsg = page.locator('#batch-error-msg');
+  await expect(batchMsg).toContainText('unreadable');
+  await expect(batchMsg).not.toContainText('Unexpected');
+  await expect(batchMsg).not.toContainText('Failed to run batch check');
+
+  await page.goto('/?fresh=spf#spf');
+  await page.getByLabel('Domain whose SPF record should be inspected').fill('example.com');
+  await page.getByRole('button', { name: 'Inspect SPF' }).click();
+  const spfMsg = page.locator('#spf-error-msg');
+  await expect(spfMsg).toContainText('unreadable');
+  await expect(spfMsg).not.toContainText('Unexpected');
+  await expect(spfMsg).not.toContainText('Failed to inspect SPF');
+});

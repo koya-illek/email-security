@@ -369,7 +369,7 @@ h1 em { color: var(--accent); font-style: normal; font-weight: 500; }
 
 /* Buttons */
 .secondary-button, .icon-button {
-  min-height: 42px;
+  min-height: 44px;
   padding: 0 15px;
   border: 1px solid var(--line-bright);
   background: transparent;
@@ -389,7 +389,7 @@ textarea:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
-.icon-button { width: 42px; padding: 0; color: var(--accent); font-size: 22px; }
+.icon-button { width: 44px; padding: 0; color: var(--accent); font-size: 22px; }
 
 .primary-button {
   min-height: 46px;
