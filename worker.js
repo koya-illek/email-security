@@ -43,7 +43,6 @@ const EXPENSIVE_RATE_LIMITER_BINDING = 'EXPENSIVE_RATE_LIMITER';
 // well-configured domains exhausted the whole budget and later rows scored
 // falsely "poor"; three domains is the realistic ceiling for honest scores.
 const BATCH_MAX_DOMAINS = 3;
-const BATCH_CONCURRENCY = 5;
 // PTR observation carries no score weight, so it runs after scored controls
 // and is capped well below its theoretical fan-out of 8 hosts x 8 addresses;
 // only the first observation is ever rendered or surfaced.
@@ -152,35 +151,32 @@ async function createBatchReport(domains, env, requestBudget = null) {
   // evenly instead and carry each row's own snapshot so a truncated analysis
   // stays visible instead of reading as a legitimate low score.
   const perDomainLimit = Math.max(1, Math.floor(REQUEST_SUBREQUEST_LIMIT / uniqueDomains.length));
-  const results = [];
-  for (let index = 0; index < uniqueDomains.length; index += BATCH_CONCURRENCY) {
-    const chunk = uniqueDomains.slice(index, index + BATCH_CONCURRENCY);
-    const chunkResults = await Promise.all(chunk.map(async domain => {
-      const domainBudget = createRequestBudget(perDomainLimit);
-      try {
-        const report = await analyzeDomain(domain, domainBudget);
-        return {
-          domain, overall_score: report.overall_score, overall_status: report.overall_status,
-          spf: { status: report.spf.status, record: report.spf.record || null },
-          dkim: { status: report.dkim.status, selectors: (report.dkim.selectors || []).map(selector => selector.selector) },
-          dmarc: { status: report.dmarc.status, policy: report.dmarc.policy || null },
-          mx: { status: report.mx.status, records: (report.mx.records || []).map(record => record.host) },
-          transport: { status: report.transport?.status || 'info' },
-          request_budget: domainBudget.snapshot(),
-        };
-      } catch (error) {
-        // An analysis error is not evidence about the domain; report every
-        // control as inconclusive so the row cannot read as a failing setup.
-        const unavailable = { status: 'info' };
-        return {
-          domain, overall_score: 0, overall_status: 'error', error: error.message,
-          spf: unavailable, dkim: unavailable, dmarc: unavailable, mx: unavailable, transport: unavailable,
-          request_budget: domainBudget.snapshot(),
-        };
-      }
-    }));
-    results.push(...chunkResults);
-  }
+  // At most 3 domains run, so one parallel wave covers every row; each still
+  // draws only from its own slice of the shared platform budget.
+  const results = await Promise.all(uniqueDomains.map(async domain => {
+    const domainBudget = createRequestBudget(perDomainLimit);
+    try {
+      const report = await analyzeDomain(domain, domainBudget);
+      return {
+        domain, overall_score: report.overall_score, overall_status: report.overall_status,
+        spf: { status: report.spf.status, record: report.spf.record || null },
+        dkim: { status: report.dkim.status, selectors: (report.dkim.selectors || []).map(selector => selector.selector) },
+        dmarc: { status: report.dmarc.status, policy: report.dmarc.policy || null },
+        mx: { status: report.mx.status, records: (report.mx.records || []).map(record => record.host) },
+        transport: { status: report.transport?.status || 'info' },
+        request_budget: domainBudget.snapshot(),
+      };
+    } catch (error) {
+      // An analysis error is not evidence about the domain; report every
+      // control as inconclusive so the row cannot read as a failing setup.
+      const unavailable = { status: 'info' };
+      return {
+        domain, overall_score: 0, overall_status: 'error', error: error.message,
+        spf: unavailable, dkim: unavailable, dmarc: unavailable, mx: unavailable, transport: unavailable,
+        request_budget: domainBudget.snapshot(),
+      };
+    }
+  }));
   const usedSubrequests = results.reduce((total, row) => total + (row.request_budget?.used || 0), 0);
   const report = {
     _reportType: 'batch', domains: uniqueDomains, results, created_at: new Date().toISOString(),
@@ -2421,7 +2417,7 @@ function analyzeTransportSecurity(mtaStsRecords, tlsRptRecords, policyResult, mx
     });
   } else {
     checks.push({
-      status: transientMtaDns ? 'info' : 'info',
+      status: 'info',
       title: transientMtaDns ? 'MTA-STS DNS lookup inconclusive' : 'No MTA-STS DNS record',
       detail: transientMtaDns ? `DNS returned ${mtaStsRecords.dnsStatus}; absence cannot be concluded.` : 'Inbound SMTP transport policy is not advertised.',
       recommendation: transientMtaDns ? 'Retry before changing transport policy.' : 'Add MTA-STS if the domain receives business email and you want downgrade protection.'

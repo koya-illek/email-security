@@ -130,15 +130,6 @@ a { color: inherit; }
 
 /* Hero */
 .hero { padding: 116px 0 48px; position: relative; }
-.section-label {
-  display: none; align-items: center; gap: 10px;
-  margin: 0 0 22px;
-  color: var(--muted);
-  font: 500 12px/1 var(--mono);
-  letter-spacing: .15em;
-  text-transform: uppercase;
-}
-.section-label span { color: var(--accent); }
 
 h1 {
   max-width: 920px;
@@ -837,33 +828,6 @@ textarea:focus-visible {
   flex-wrap: wrap;
   color: var(--muted);
   font-size: 12px;
-}
-
-/* Score card (legacy compat) */
-.score-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 36px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  margin-bottom: 24px;
-}
-.score-value {
-  font-size: 64px;
-  font-weight: 800;
-  line-height: 1;
-  font-family: var(--mono);
-}
-.score-value.excellent, .score-value.good { color: var(--accent); }
-.score-value.fair { color: var(--warning); }
-.score-value.poor { color: var(--critical); }
-.score-label {
-  font-size: 14px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .1em;
-  margin-top: 8px;
 }
 
 /* Principles section */
