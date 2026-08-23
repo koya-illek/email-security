@@ -102,6 +102,17 @@
     });
   }
 
+  // An edge or proxy failure can answer any API call with a non-JSON page;
+  // surfacing the parser's syntax error would describe our tooling, not the
+  // user's problem.
+  async function parseApiResponse(response, serviceLabel) {
+    try {
+      return await response.json();
+    } catch {
+      throw new Error(`The ${serviceLabel} service returned an unreadable response. Try again shortly.`);
+    }
+  }
+
   // Explicit "smooth" bypasses the CSS prefers-reduced-motion override, so
   // programmatic scrolls consult the media query themselves.
   const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -160,14 +171,7 @@
     if (preferBatch) selectTool("batch", false);
     try {
       const r = await fetch(`${API_BASE}/api/reports/${reportId}`);
-      let d;
-      try {
-        d = await r.json();
-      } catch {
-        // A non-JSON failure body (for example an HTML error page) should not
-        // surface as a raw JSON-parse message.
-        throw new Error("The report service returned an unreadable response.");
-      }
+      const d = await parseApiResponse(r, "report");
       if (!r.ok || d.error) throw new Error(d.error || "Report not found or expired");
       if (d._reportType === "batch") {
         // Share links may lose their #batch- prefix; dispatch on the stored
@@ -694,18 +698,36 @@
   let spfValidationTimer = 0;
   let dmarcValidationTimer = 0;
 
+  // A validation answer is only trustworthy when it carries the validation
+  // shape. HTTP-error envelopes ({error}, e.g. a record body over the API's
+  // 16 KiB cap) and non-JSON pages must land in showValidation's blocked
+  // branch, never in its "Valid record" branch with copying enabled.
+  async function requestRecordValidation(type, domain, record) {
+    const response = await fetch(`${API_BASE}/api/records/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, domain, record }),
+    });
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    if (!response.ok || !payload || typeof payload !== "object" || payload.error || !Array.isArray(payload.errors)) {
+      const reason = payload?.error || `HTTP ${response.status}`;
+      return { errors: [`This record could not be validated (${reason}).`], warnings: [] };
+    }
+    return payload;
+  }
+
   function scheduleSpfValidation(sequence, root, extra, domain, record) {
     // Only the validation POST is debounced; the rest of the render stays
     // synchronous so safety-state resets keep their event ordering.
     clearTimeout(spfValidationTimer);
     spfValidationTimer = setTimeout(async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/records/validate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "spf", domain, record }),
-        });
-        const validation = await r.json();
+        const validation = await requestRecordValidation("spf", domain, record);
         if (sequence !== spfValidationSequence) return;
         showValidation(root, validation, extra, record, "spf");
       } catch {
@@ -754,12 +776,7 @@
     clearTimeout(dmarcValidationTimer);
     dmarcValidationTimer = setTimeout(async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/records/validate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "dmarc", domain, record }),
-        });
-        const validation = await r.json();
+        const validation = await requestRecordValidation("dmarc", domain, record);
         if (sequence !== dmarcValidationSequence) return;
         showValidation(root, validation, extra, record, "dmarc");
       } catch {
@@ -918,7 +935,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ headers: raw }),
       });
-      const d = await r.json();
+      const d = await parseApiResponse(r, "header analysis");
       if (!r.ok || d.error) throw new Error(d.error || "Header analysis failed");
       lastHeaderAnalysis = d;
       showHeaderAnalysis(d);
@@ -948,7 +965,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ips: lastHeaderAnalysis.ips }),
       });
-      const d = await r.json();
+      const d = await parseApiResponse(r, "hop enrichment");
       if (!r.ok || d.error) throw new Error(d.error || "PTR lookup failed");
       lastHeaderAnalysis.enrichment = d.enriched || [];
       showHeaderAnalysis(lastHeaderAnalysis);

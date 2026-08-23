@@ -423,3 +423,69 @@ test('resets SPF change confirmation after every subsequent record change', asyn
   await expect(copyButton).toBeDisabled();
   await expect(page.locator('#spf-safety-notice')).toContainText('Terminal policy changed');
 });
+
+test('an HTTP-error validation answer blocks copying in both builders', async ({ page }) => {
+  // An oversized record body crosses the API's 16 KiB cap and is answered
+  // with a bare {error} envelope; the builders must never read that as a
+  // successful validation.
+  await page.route('**/api/records/validate', route => route.fulfill({
+    status: 413,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: 'Request body exceeds the 16 KiB limit.' })
+  }));
+
+  await page.goto('/#builder');
+  await page.locator('#builder-domain').fill('example.com');
+
+  const spfCopy = page.locator('#spf-builder-output .copy-btn');
+  await expect(spfCopy).toBeDisabled();
+  await expect(spfCopy).toHaveText('Invalid record');
+  const spfNotice = page.locator('#spf-builder-output .validation-result .notice');
+  await expect(spfNotice).toContainText('Cannot copy this record');
+  await expect(spfNotice).toContainText('16 KiB limit');
+  await expect(page.locator('#spf-builder-output')).not.toContainText('Valid record');
+  await expect(page.locator('#spf-builder-output')).not.toContainText('undefined');
+
+  await page.getByRole('button', { name: 'DMARC Planner' }).click();
+  await page.locator('#dmarc-domain').fill('example.com');
+  const dmarcCopy = page.locator('#dmarc-builder-output .copy-btn');
+  await expect(dmarcCopy).toBeDisabled();
+  await expect(dmarcCopy).toHaveText('Invalid record');
+  await expect(page.locator('#dmarc-builder-output .validation-result .notice')).toContainText('Cannot copy this record');
+});
+
+test('an unreadable analysis answer reads as service trouble, never parser noise', async ({ page }) => {
+  await page.route('**/api/header/analyze', route => route.fulfill({
+    status: 502,
+    contentType: 'text/html',
+    body: '<!DOCTYPE html><html><body>bad gateway</body></html>'
+  }));
+  await page.goto('/#headers');
+  await page.getByLabel('Complete message headers').fill(goodHeaders);
+  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+
+  await expect(page.locator('#header-error')).toBeVisible();
+  const msg = page.locator('#header-error-msg');
+  await expect(msg).toContainText('unreadable');
+  await expect(msg).not.toContainText('Unexpected');
+});
+
+test('hop enrichment also reports an unreadable service answer readably', async ({ page }) => {
+  // Only enrichment is stubbed; analysis runs against the real local worker
+  // so the Enrich Hops button enables from genuine parsed hops.
+  await page.route('**/api/header/enrich', route => route.fulfill({
+    status: 502,
+    contentType: 'text/html',
+    body: '<html>bad gateway</html>'
+  }));
+  await page.goto('/#headers');
+  await page.getByLabel('Complete message headers').fill(goodHeaders);
+  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+  const enrich = page.getByRole('button', { name: 'Enrich Hops' });
+  await expect(enrich).toBeEnabled();
+  await enrich.click();
+
+  const msg = page.locator('#header-error-msg');
+  await expect(msg).toContainText('unreadable');
+  await expect(msg).not.toContainText('Unexpected');
+});
