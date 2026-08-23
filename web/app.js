@@ -362,13 +362,13 @@
     }
 
     // Metrics
-    const scoreClass = scoreClassFor(d.overall_score);
+    const score = Number.isFinite(d.overall_score) ? d.overall_score : null;
     domainMetrics.innerHTML = `
-      <div class="metric"><small>Security Score</small><strong class="${scoreClass}">${d.overall_score}/100</strong></div>
-      <div class="metric"><small>SPF</small><strong class="${statusClass(d.spf.status)}">${esc(d.spf.status)}</strong></div>
-      <div class="metric"><small>DKIM</small><strong class="${statusClass(d.dkim.status)}">${esc(d.dkim.status)}</strong></div>
-      <div class="metric"><small>DMARC</small><strong class="${statusClass(d.dmarc.status)}">${esc(d.dmarc.status)}</strong></div>
-      <div class="metric"><small>MX</small><strong class="${statusClass(d.mx.status)}">${esc(d.mx.status)}</strong></div>
+      <div class="metric"><small>Security Score</small><strong class="${score === null ? "info" : scoreClassFor(score)}">${score === null ? "unavailable" : `${score}/100`}</strong></div>
+      ${metricCell("SPF", d.spf)}
+      ${metricCell("DKIM", d.dkim)}
+      ${metricCell("DMARC", d.dmarc)}
+      ${metricCell("MX", d.mx)}
     `;
 
     // Results accordion
@@ -414,8 +414,22 @@
     return score >= 70 ? "good" : score >= 50 ? "warn" : "poor";
   }
 
+  // Share links replay stored D1 rows verbatim for 14 days regardless of
+  // analysis schema version, so every category below is treated as external
+  // input: a missing or shape-drifted value reads as an inconclusive metric,
+  // never as a failing one and never as a render crash.
+  function metricCell(label, cat) {
+    const status = typeof cat?.status === "string" ? cat.status : "";
+    return `<div class="metric"><small>${label}</small><strong class="${safeStatusClass(status)}">${esc(status || "unavailable")}</strong></div>`;
+  }
+
+  function sectionChip(d) {
+    const status = typeof d?.status === "string" ? d.status : "";
+    return `<span class="cs-count ${safeStatusClass(status)}">${esc(status || "unavailable")}</span>`;
+  }
+
   function createResultSection(icon, title, d) {
-    const checks = (d.checks || [])
+    const checks = (d?.checks || [])
       .map(
         (x) => `<div class="check-item ${safeStatusClass(x.status)}">
           <div class="check-dot"></div>
@@ -428,22 +442,23 @@
       )
       .join("");
 
-    const record = d.record
+    const record = d?.record
       ? `<div class="record-box"><strong>DNS Record</strong>${esc(d.record)}</div>`
       : "";
 
     const selectors =
-      d.selectors && d.selectors.length
+      d?.selectors && d.selectors.length
         ? `<div class="record-box"><strong>Found DKIM Selectors</strong>${d.selectors
-            .map((x) => `<div style="margin-bottom:8px"><code>${esc(x.selector)}</code></div>`)
-            .join("")}</div>`
+            .map((x) => `<code>${esc(x.selector)}</code>`)
+            .join("<br>")}
+        </div>`
         : "";
 
     return `<details class="collapsible-section">
       <summary>
         <span class="cs-icon">${icon}</span>
         <span class="cs-title">${title}</span>
-        <span class="cs-count ${safeStatusClass(d.status)}">${esc(d.status)}</span>
+        ${sectionChip(d)}
       </summary>
       <div class="cs-body">
         ${record}${selectors}${checks}
@@ -451,28 +466,32 @@
     </details>`;
   }
 
+  function checkItem(x) {
+    return `<div class="check-item ${safeStatusClass(x.status)}">
+      <div class="check-dot"></div>
+      <div class="check-content">
+        <div class="check-title">${esc(x.title)}</div>
+        <div class="check-detail">${esc(x.detail)}</div>
+        ${x.recommendation ? `<div class="check-recommendation"><strong>${x.recommendationLabel || "Recommendation"}</strong>${esc(x.recommendation)}</div>` : ""}
+      </div>
+    </div>`;
+  }
+
   function mxCheckItems(d) {
-    return (d.checks || [])
-      .map(
-        (x) => `<div class="check-item ${safeStatusClass(x.status)}">
-          <div class="check-dot"></div>
-          <div class="check-content">
-            <div class="check-title">${esc(x.title)}</div>
-            <div class="check-detail">${esc(x.detail)}</div>
-            ${x.recommendation ? `<div class="check-recommendation"><strong>Recommendation</strong>${esc(x.recommendation)}</div>` : ""}
-          </div>
-        </div>`
-      )
-      .join("");
+    return (d?.checks || []).map(checkItem).join("");
   }
 
   function createMXSection(d) {
     // The chip must reflect the analyzed status: the mixed Null-MX failure
     // arrives with records present, so "N found" alone would style a failing
     // lookup as healthy.
-    const chip = `<span class="cs-count ${safeStatusClass(d.status)}">${esc(d.status || (d.records?.length ? "pass" : "info"))}</span>`;
-    if (!d.records || !d.records.length) {
-      const body = mxCheckItems(d) || '<p class="muted" style="padding:16px 0">No MX records found.</p>';
+    const status = typeof d?.status === "string" ? d.status : (d?.records?.length ? "pass" : "");
+    const chip = `<span class="cs-count ${safeStatusClass(status)}">${esc(status || (d?.records?.length ? "pass" : "unavailable"))}</span>`;
+    if (!d?.records || !d.records.length) {
+      const body = mxCheckItems(d)
+        || (d
+          ? '<p class="muted">No MX records found.</p>'
+          : '<p class="muted">MX evidence is not present in this stored report.</p>');
       return `<details class="collapsible-section">
         <summary>
           <span class="cs-icon">MX</span>
@@ -502,23 +521,12 @@
   }
 
   function createPTRSection(d) {
-    const checks = (d.checks || [])
-      .map(
-        (x) => `<div class="check-item ${safeStatusClass(x.status)}">
-          <div class="check-dot"></div>
-          <div class="check-content">
-            <div class="check-title">${esc(x.title)}</div>
-            <div class="check-detail">${esc(x.detail)}</div>
-            ${x.recommendation ? `<div class="check-recommendation"><strong>Recommendation</strong>${esc(x.recommendation)}</div>` : ""}
-          </div>
-        </div>`
-      )
-      .join("");
+    const checks = (d?.checks || []).map(checkItem).join("");
     return `<details class="collapsible-section">
       <summary>
         <span class="cs-icon">PTR</span>
         <span class="cs-title">Reverse DNS (PTR)</span>
-        <span class="cs-count ${safeStatusClass(d.status)}">${esc(d.status)}</span>
+        ${sectionChip(d)}
       </summary>
       <div class="cs-body">${checks}</div>
     </details>`;
@@ -616,14 +624,7 @@
           <span class="cs-count ${safeStatusClass(spf.status)}">${esc(spf.status)}</span>
         </summary>
         <div class="cs-body">
-          ${spf.checks.map((x) => `<div class="check-item ${safeStatusClass(x.status)}">
-            <div class="check-dot"></div>
-            <div class="check-content">
-              <div class="check-title">${esc(x.title)}</div>
-              <div class="check-detail">${esc(x.detail)}</div>
-              ${x.recommendation ? `<div class="check-recommendation"><strong>Recommendation</strong>${esc(x.recommendation)}</div>` : ""}
-            </div>
-          </div>`).join("")}
+          ${spf.checks.map(checkItem).join("")}
         </div>
       </details>`;
     }
@@ -939,11 +940,13 @@
   }
 
   function prefillBuilders(d) {
-    $("#builder-domain").value = d.domain;
-    $("#dmarc-domain").value = d.domain;
-    $("#dmarc-rua").value = (d.dmarc.rua && d.dmarc.rua[0]) || "dmarc@" + d.domain;
-    $("#dmarc-stage").value = d.dmarc.policy || "none";
-    prefillSpfBuilder(d.domain, d.spf?.record);
+    const domain = typeof d?.domain === "string" ? d.domain : "";
+    $("#builder-domain").value = domain;
+    $("#dmarc-domain").value = domain;
+    const rua = Array.isArray(d?.dmarc?.rua) ? d.dmarc.rua[0] : null;
+    $("#dmarc-rua").value = rua || (domain ? "dmarc@" + domain : "");
+    $("#dmarc-stage").value = d?.dmarc?.policy || "none";
+    prefillSpfBuilder(domain, d?.spf?.record);
     renderDmarcBuilder();
   }
 
@@ -1151,14 +1154,7 @@
         <span class="cs-count ${safeStatusClass(summary.status)}">${esc(summary.status)}</span>
       </summary>
       <div class="cs-body">
-        ${d.checks.map((x) => `<div class="check-item ${safeStatusClass(x.status)}">
-          <div class="check-dot"></div>
-          <div class="check-content">
-            <div class="check-title">${esc(x.title)}</div>
-            <div class="check-detail">${esc(x.detail)}</div>
-            ${x.recommendation ? `<div class="check-recommendation"><strong>Recommended next step</strong>${esc(x.recommendation)}</div>` : ""}
-          </div>
-        </div>`).join("")}
+        ${d.checks.map((x) => checkItem({ ...x, recommendationLabel: "Recommended next step" })).join("")}
       </div>
     </details>`;
 
@@ -1348,7 +1344,10 @@
   });
 
   function renderBatchTable(results) {
-    const sorted = batchSortCol ? [...results].sort((a, b) => {
+    // Stored batch reports replay through here as external data; a missing
+    // results array renders an empty table rather than crashing the panel.
+    const rows = Array.isArray(results) ? results : [];
+    const sorted = batchSortCol ? [...rows].sort((a, b) => {
       let va, vb;
       if (batchSortCol === "domain") { va = a.domain; vb = b.domain; }
       else if (batchSortCol === "score") { va = a.overall_score; vb = b.overall_score; }
@@ -1356,7 +1355,7 @@
       if (va < vb) return -1 * batchSortDir;
       if (va > vb) return 1 * batchSortDir;
       return 0;
-    }) : results;
+    }) : rows;
 
     const headers = [
       { key: "domain", label: "Domain" },
@@ -1384,7 +1383,9 @@
       // internal failure as a failing domain.
       const scoreCell = r.overall_status === "error"
         ? `<span class="batch-status info" title="${esc(r.error || "Analysis failed")}">error</span>`
-        : `<strong class="${scoreClassFor(r.overall_score)}">${r.overall_score}/100</strong>${truncated ? ' <span class="batch-status info">partial</span>' : ""}`;
+        : Number.isFinite(r.overall_score)
+          ? `<strong class="${scoreClassFor(r.overall_score)}">${r.overall_score}/100</strong>${truncated ? ' <span class="batch-status info">partial</span>' : ""}`
+          : `<span class="batch-status info" title="This stored report predates the current score format">unavailable</span>`;
       html += `<td class="score-cell">${scoreCell}</td>`;
       html += `<td>${batchStatusCell(r.spf)}</td>`;
       html += `<td>${batchStatusCell(r.dkim)}</td>`;
@@ -1403,7 +1404,7 @@
         const col = button.dataset.col;
         if (batchSortCol === col) batchSortDir = -batchSortDir;
         else { batchSortCol = col; batchSortDir = 1; }
-        renderBatchTable(lastBatchReport.results);
+        renderBatchTable(lastBatchReport?.results);
       });
     });
 

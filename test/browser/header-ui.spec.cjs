@@ -204,8 +204,40 @@ test('fresh share-link navigation renders domain and batch reports after DOM boo
   expect(errors).toEqual([]);
 });
 
-test('a dead #batch- share link explains itself inside the batch panel', async ({ page }) => {
-  await page.route('**/api/reports/dead0000dead0000', route => route.fulfill({
+test('a shape-drifted stored report degrades to unavailable evidence instead of crashing', async ({ page }) => {
+  // Share links replay any D1 row written within the 14-day retention,
+  // regardless of which analysis schema produced it. Missing or drifted
+  // categories must render as inconclusive evidence, never throw mid-render.
+  const drifted = {
+    id: 'drft0000drft0000',
+    domain: 'legacy.example',
+    overall_score: 'eighty',
+    overall_status: 'good',
+    score_confidence: 'medium',
+    unknown_controls: [],
+    share: { available: true, id: 'drft0000drft0000', retentionDays: 14, expiresAt: '2026-09-06T00:00:00.000Z', bearer: true }
+    // spf/dkim/dmarc/mx/transport/caa/ptr are all absent on purpose.
+  };
+  await page.route('**/api/reports/drft0000drft0000', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(drifted)
+  }));
+
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/#drft0000drft0000');
+  await expect(page.locator('#domain-report')).toBeVisible();
+  await expect(page.locator('#report-domain')).toHaveText('legacy.example');
+  const metrics = page.locator('#domain-metrics');
+  await expect(metrics).toContainText('unavailable');
+  await expect(metrics).not.toContainText('/100');
+
+  // The degraded report must still hand off to the Record Builder.
+  await page.getByRole('button', { name: 'Build records' }).click();
+  await expect(page.locator('#spf-builder-output .dns-value')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('a dead #batch- share link explains itself inside the batch panel', async ({ page }) => {  await page.route('**/api/reports/dead0000dead0000', route => route.fulfill({
     status: 404,
     contentType: 'application/json',
     body: JSON.stringify({ error: 'Report not found or expired' })
