@@ -170,11 +170,32 @@ function authResultCheck(method, result) {
   };
 }
 
+// Address shapes are extracted most-specific-first, blanking each consumed
+// span before the next pattern runs. A single combined alternation let a
+// generic hexadecimal pattern eat part of an IPv4 tail ("::ffff:198" out of
+// "::ffff:198.51.100.9") or the "IPv6:" label inside an address literal
+// ("6:2001:db8::1"), producing plausible-looking but wrong addresses.
+const IP_PATTERNS = [
+  // RFC 4291 §2.2 form 3: hexadecimal prefix with embedded IPv4 tail.
+  /(?<![0-9a-f:])(?:[0-9a-f]{0,4}:){1,6}(?:\d{1,3}\.){3}\d{1,3}/gi,
+  // Plain dotted-quad IPv4 (not the embedded tail of the form above).
+  /(?<![0-9a-f.:])(?:\d{1,3}\.){3}\d{1,3}(?![0-9a-f])/g,
+  // General compressed hexadecimal IPv6.
+  /(?<![0-9a-f:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![0-9a-f:])/gi
+];
+
 function extractIpCandidates(value) {
-  const candidates = String(value || '').match(
-    /(?<![0-9a-f])(?:\d{1,3}\.){3}\d{1,3}(?![0-9a-f])|(?<![0-9a-f:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![0-9a-f:])/gi
-  ) || [];
-  return [...new Set(candidates.map(candidate => candidate.replace(/^[[(]|[\])];,]$/g, '')))]
+  // RFC 5321 §4.1.3 wraps IPv6 in "[IPv6:...]"; unwrap the label first so it
+  // cannot glue onto the address text.
+  let working = String(value || '').replace(/\[\s*ipv6\s*:/gi, '[');
+  const found = [];
+  for (const pattern of IP_PATTERNS) {
+    working = working.replace(pattern, match => {
+      found.push(match);
+      return ' '.repeat(match.length);
+    });
+  }
+  return [...new Set(found.map(candidate => candidate.replace(/^[[(]|[\])];,]$/g, '')))]
     .filter(candidate => {
       try {
         return ipaddr.parse(candidate).range() === 'unicast';
@@ -307,6 +328,24 @@ function analyzeEmailHeaders(raw) {
       detail: `Found ${headers.from.length} visible From fields. A normal message should contain exactly one.`,
       recommendation: 'Treat the message as malformed or suspicious. Do not rely on the displayed sender without independent verification.'
     });
+  } else {
+    // RFC 5322 §3.6.2 allows one mailbox; a comma-separated list in a single
+    // From field is a known phishing shape that DMARC alignment cannot
+    // resolve, because there is no single author domain to align against.
+    const unquoted = String(from || '').replace(/"[^"]*"/g, '');
+    const fromDomains = [...new Set(
+      [...unquoted.matchAll(/@([^\s<>,;\]]+)/g)]
+        .map(match => normalizeDomain(match[1]))
+        .filter(Boolean)
+    )];
+    if (fromDomains.length > 1) {
+      checks.push({
+        status: 'fail',
+        title: 'From field lists multiple addresses',
+        detail: `One From field contains several addresses (${fromDomains.join(', ')}); the claimed author is ${fromDomain || 'unparsed'}.`,
+        recommendation: 'Treat the message as malformed or suspicious. A compliant From field names exactly one mailbox.'
+      });
+    }
   }
 
   if (returnDomain && fromDomain) {

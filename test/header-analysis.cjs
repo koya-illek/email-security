@@ -112,6 +112,64 @@ describe('Header Analyzer', () => {
     assert.equal(result.checks.some(check => check.title === 'Delivery timestamps are out of sequence'), true);
   });
 
+  it('flags several addresses inside a single From field', () => {
+    const result = analyzeEmailHeaders([
+      'From: a@example.com, b@evil.example',
+      'Authentication-Results: mx.receiver.example; spf=pass; dkim=pass header.d=example.com; dmarc=pass'
+    ].join('\r\n'));
+    assert.equal(result.summary.status, 'fail');
+    assert.equal(result.checks.some(check => check.title === 'From field lists multiple addresses'), true);
+  });
+
+  it('does not treat one quoted display name plus one address as multi-address', () => {
+    const result = analyzeEmailHeaders([
+      'From: "billing@example.com accounts" <billing@example.com>',
+      'Authentication-Results: mx.receiver.example; spf=pass'
+    ].join('\r\n'));
+    assert.equal(result.checks.some(check => check.title === 'From field lists multiple addresses'), false);
+  });
+
+  describe('hop IP extraction', () => {
+    const receivedWith = address =>
+      `Received: from mail.example (${address}) by mx.receiver.example; Thu, 23 Jul 2026 20:00:00 +0100`;
+
+    function ipsFor(address) {
+      return analyzeEmailHeaders([
+        'From: Sender <sender@example.com>',
+        receivedWith(address)
+      ].join('\r\n')).ips;
+    }
+
+    it('keeps plain IPv4 and globally routable hexadecimal IPv6', () => {
+      assert.deepEqual(ipsFor('[93.184.216.34]').filter(ip => ip === '93.184.216.34'), ['93.184.216.34']);
+      assert.deepEqual(ipsFor('[2606:4700:4700::1111]'), ['2606:4700:4700::1111']);
+    });
+
+    it('unwraps RFC 5321 IPv6 address literals instead of gluing on the label', () => {
+      assert.deepEqual(ipsFor('[IPv6:2606:4700:4700::1111]'), ['2606:4700:4700::1111']);
+      // The fabricated "6:2001:db8::1" shape must never appear.
+      assert.equal(ipsFor('[IPv6:2001:db8::1]').includes('6:2001:db8::1'), false);
+    });
+
+    it('reads IPv4-embedded IPv6 whole or drops it whole, never a truncation', () => {
+      // ::ffff:/96 is ipv4-mapped, which this tool deliberately filters.
+      const mapped = ipsFor('[::ffff:198.51.100.9]');
+      assert.equal(mapped.includes('::ffff:198'), false);
+      assert.equal(mapped.includes('198.51.100.9'), false);
+      assert.deepEqual(mapped, []);
+
+      // Documentation-prefix embedded form must not surface "::192" either.
+      assert.equal(ipsFor('[2001:db8::192.0.2.1]').includes('2001:db8::192'), false);
+
+      // A routable embedded form is extracted intact for enrichment.
+      assert.deepEqual(ipsFor('[2606:4700::192.0.2.25]'), ['2606:4700::192.0.2.25']);
+    });
+
+    it('rejects impossible octets instead of parsing a neighbouring token', () => {
+      assert.deepEqual(ipsFor('(999.1.2.3)'), []);
+    });
+  });
+
   it('rejects oversized input', () => {
     assert.throws(
       () => analyzeEmailHeaders(`Subject: ${'x'.repeat(MAX_HEADER_BYTES)}`),
