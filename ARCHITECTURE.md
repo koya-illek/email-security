@@ -64,8 +64,8 @@ The core is currently a single Worker module. The internal separation is logical
 2. The router validates method, content type, request size, origin, domain syntax, and batch bounds.
 3. A request-wide budget reserves at most 45 outbound subrequests.
 4. DNS queries run through structured DNS over HTTPS. NODATA, NXDOMAIN, timeout, SERVFAIL, provider error, and budget exhaustion remain distinct states.
-5. SPF records are parsed case-insensitively. Includes and redirects are traversed within lookup, void, cycle, depth, and request budgets.
-6. DMARC discovery follows the implemented organisational-domain tree walk and validates external reporting authorisation.
+5. SPF records are parsed case-insensitively. Includes and redirects are traversed within lookup, void, cycle, depth, and request budgets. A record whose terminal strength lives behind `redirect=` is judged by the redirect target's all-term; unresolvable targets fail closed, and sender-macro targets are disclosed as statically unverifiable instead of being queried literally.
+6. DMARC discovery follows the implemented organisational-domain tree walk and validates external reporting authorisation. For records found at an ancestor domain, the effective policy applied to the checked domain is `sp=` when present (RFC 7489 §6.6.3), not the parent's `p=`.
 7. DKIM checks probe the whole bounded selector catalogue, selectors inferred from SPF and MX first. Absence outside that catalogue is reported as limited coverage.
 8. MX, Null MX, implicit MX fallback, CAA, TLS-RPT, and MTA-STS evidence is collected. Within the shared request budget, scored controls are scheduled first (SPF recursion, then DKIM discovery alongside the MTA-STS policy fetch); the unscored inbound PTR observation runs last on remaining subrequests and is capped at four observations.
 9. MTA-STS is fetched only from the expected HTTPS origin with redirects rejected, bounded body reads, and an explicit timeout.
@@ -79,7 +79,7 @@ The core is currently a single Worker module. The internal separation is logical
 2. `header-analyzer.js` parses fields locally without DNS or HTTP calls.
 3. Authentication-Results and related fields are presented as receiver-provided evidence. They are not cryptographically re-verified.
 4. The analyzer builds structured hops, detects conflicting results, and evaluates visible SPF, DKIM, and DMARC alignment claims.
-5. If the caller separately requests enrichment, up to ten globally routable hop addresses receive bounded PTR and forward-confirmation observations.
+5. If the caller separately requests enrichment, up to ten globally routable hop addresses receive bounded PTR and forward-confirmation observations. Only authoritative PTR outcomes are edge-cached; transient resolver failures return an explicit inconclusive state and retry on the next request.
 
 ## Interfaces
 
@@ -105,7 +105,7 @@ MCP publishes `analyze_email_domain`, `analyze_email_headers`, `analyze_email_do
 | Cloudflare Workers and Assets | Runtime, custom domains, static site, request handling, and Cron | Normal service request metadata | Yes |
 | Cloudflare D1 | Shareable report storage and durable fallback quota state | Report JSON, expiry metadata, opaque IDs, one-way client fingerprints | Required for sharing |
 | Cloudflare Rate Limiting bindings | Edge abuse controls for standard and expensive routes | Cloudflare-managed request keys and counters | Production control |
-| Cloudflare Cache API | Caches repeated domain and PTR observations, plus durable MTA-STS observations (fetched policies or definitive HTTP answers; transient fetch failures stay uncached) | Internal cache keys and processed responses | Performance optimization |
+| Cloudflare Cache API | Caches repeated domain and PTR observations, durable MTA-STS observations, and authoritative PTR enrichment answers (fetched policies/answers or definitive DNS outcomes; transient failures stay uncached) | Internal cache keys and processed responses | Performance optimization |
 | Cloudflare DNS over HTTPS | Primary DNS observations | Domain or address and record type | Yes |
 | Google Public DNS | Transient-error fallback and provider evidence | Domain or address and record type | Fallback |
 | Quad9 DNS over HTTPS | Additional transient-error fallback | Domain or address and record type | Fallback |

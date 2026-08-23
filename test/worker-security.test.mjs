@@ -70,6 +70,9 @@ test("P0 analysis keeps DNS uncertainty, score confidence, and SPF flatten proof
   assert.match(worker, /findSpfRecord/);
   assert.match(worker, /safeToPublish: context\.proof/);
   assert.match(worker, /include terminal .* proven -all subset/);
+  // Analysis-output changes invalidate edge-cached reports; a stale version
+  // would keep serving superseded verdicts for up to a day after deploy.
+  assert.match(worker, /const CACHE_VERSION = 'v9-dmarc-sp-spf-redirect'/);
 });
 
 test("analysis schedules scored controls before the unscored PTR observation", () => {
@@ -147,9 +150,17 @@ test("POST rate limiting classifies expensive paths, preserves CORS, and bypasse
     "/api/check",
     "/api/header/enrich",
     "/api/spf/inspect",
-    "/api/spf/evaluate"
+    "/api/spf/evaluate",
+    "/api/records/validate",
+    "/api/v2/record-build"
   ]) {
     assert.match(worker, new RegExp(`['"]${path.replaceAll('/', '\\/')}['"]`));
+  }
+  // The builders run recursive DNS validation plus a full RFC 7208 evaluation;
+  // they must sit behind the expensive limiter like inspect, not the cheap one.
+  const expensiveSet = worker.slice(worker.indexOf("const EXPENSIVE_POST_PATHS = new Set(["), worker.indexOf("]);", worker.indexOf("const EXPENSIVE_POST_PATHS = new Set([")));
+  for (const path of ["/api/records/validate", "/api/v2/record-build", "/api/spf/inspect"]) {
+    assert.ok(expensiveSet.includes(`'${path}'`), `${path} must be classified expensive`);
   }
   assert.match(worker, /request\.method === 'POST'.*MCP_PATHS\.has\(url\.pathname\)/);
   assert.match(worker, /await limiter\.limit\(\{ key: client \}\)/);
@@ -157,6 +168,67 @@ test("POST rate limiting classifies expensive paths, preserves CORS, and bypasse
   assert.match(worker, /if \(request\.method === 'OPTIONS'\)/);
   assert.match(worker, /url\.pathname === '\/api\/health' && \(request\.method === 'GET' \|\| request\.method === 'HEAD'\)/);
   assert.match(worker, /CF-Connecting-IP.*anonymous/);
+});
+
+test("unmatched machine surfaces answer with the JSON error envelope and 405 on wrong verbs", () => {
+  const fallback = worker.slice(worker.indexOf("// Machine surfaces must never receive an unparseable plain-text failure."), worker.indexOf("return new Response('Not found', { status: 404, headers: securityHeaders });"));
+  assert.ok(fallback.length > 0, "API fallback must exist");
+  assert.match(fallback, /Method \$\{request\.method\} is not allowed for \$\{url\.pathname\}/);
+  assert.match(fallback, /405,\s*\{ \.\.\.corsHeaders, Allow: apiRoute\[1\]\.join\(', '\) \}/);
+  assert.match(fallback, /jsonResponse\(\{ error: 'Not found' \}, 404, corsHeaders\)/);
+});
+
+test("DMARC honours sp= for inherited records instead of scoring by the parent's p=", async () => {
+  // RFC 7489 §6.6.3: p=reject; sp=none at the ancestor means receivers enforce
+  // nothing against this subdomain; reporting "maximum protection" would be a
+  // materially false verdict.
+  const tags = await readFile(new URL("../policy-tags.js", import.meta.url), "utf8");
+  const helper = tags.slice(tags.indexOf("function effectiveDmarcPolicy(tags, inherited)"), tags.indexOf("module.exports"));
+  assert.ok(helper.length > 0, "effectiveDmarcPolicy must exist");
+  assert.match(helper, /inherited && DMARC_POLICY_VALUES\.includes\(tags\.sp\)\) return tags\.sp;/);
+  assert.match(helper, /return tags\.p \|\| null;/);
+  assert.match(worker, /require\('\.\/policy-tags'\)/);
+  const analyze = worker.slice(worker.indexOf("function analyzeDMARC(records, discovery"), worker.indexOf("function parseTagRecord(record)"));
+  assert.match(analyze, /= effectiveDmarcPolicy\(tags, inheritedRecord\)/);
+  assert.match(analyze, /\$\{usingSp \? 'sp' : 'p'\}=none/);
+  // Scoring consumes dmarc.policy, which now carries the effective value.
+  assert.match(worker, /score \+= dmarc\.policy === 'reject' \? 35 : 30/);
+});
+
+test("SPF redirect strength is judged from the redirect target's terminal policy", () => {
+  const recursion = worker.slice(worker.indexOf("async function countSpfDnsLookupsRecursive("), worker.indexOf("async function buildSpfFlattenPreview("));
+  assert.ok(recursion.length > 0, "recursion must exist");
+  // The last write to finalAll must belong to the deepest followed target.
+  assert.match(recursion, /let followedRedirect = false/);
+  assert.match(recursion, /followedRedirect = true;\s*await countSpfDnsLookupsRecursive\(redirect/);
+  assert.match(recursion, /if \(!followedRedirect\) state\.finalAll = ownAll;/);
+  const analyzeSpf = worker.slice(worker.indexOf("async function analyzeSPF("), worker.indexOf("function findDuplicateSpfIncludes("));
+  assert.match(analyzeSpf, /Hard fail via redirect \(-all\)/);
+  assert.match(analyzeSpf, /Permissive policy behind redirect/);
+  assert.match(analyzeSpf, /SPF redirect points nowhere/, "an unresolvable target is a permanent error, never a pass");
+  assert.match(analyzeSpf, /Redirected policy strength unconfirmed/);
+});
+
+test("macro-bearing SPF targets are disclosed as unverifiable, not queried literally", () => {
+  const recursion = worker.slice(worker.indexOf("async function countSpfDnsLookupsRecursive("), worker.indexOf("async function buildSpfFlattenPreview("));
+  assert.match(recursion, /hasSpfMacro\(includeDomain\)/);
+  assert.match(recursion, /state\.macroLookups\.push\(includeDomain\)/);
+  assert.match(recursion, /state\.macroLookups\.push\(redirect\)/);
+  // In the include loop the macro branch must come before any DNS spend.
+  const macroBranch = recursion.indexOf("if (hasSpfMacro(includeDomain))");
+  const dnsSpend = recursion.indexOf("const nestedRecords = await queryDNS(includeDomain");
+  assert.ok(macroBranch > -1 && dnsSpend > -1, "both branches must exist");
+  assert.ok(macroBranch < dnsSpend, "macro targets must be classified before querying DNS");
+});
+
+test("hop enrichment caches only authoritative PTR outcomes and discloses DNS trouble", () => {
+  const enrich = worker.slice(worker.indexOf("async function enrichIp("), worker.indexOf("async function analyzeDomain("));
+  assert.ok(enrich.length > 0, "enrichIp must exist");
+  assert.match(enrich, /const definitive = \['ok', 'nodata', 'nxdomain'\]\.includes\(dns\.status\)/);
+  assert.match(enrich, /result\.dns = dns;/);
+  // cache.put must be reachable only on the definitive path.
+  assert.doesNotMatch(enrich, /await cache\.put[\s\S]*const definitive/);
+  assert.match(enrich, /if \(!definitive\) \{\s*result\.dns = dns;\s*return result;\s*\}/);
 });
 
 test("the release flow pins the deployed source revision instead of a stale placeholder", async () => {

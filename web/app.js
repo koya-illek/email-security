@@ -1059,7 +1059,13 @@
     const addresses = (h.ips || [])
       .map((ip) => {
         const e = (enrichment || []).find((x) => x.ip === ip);
-        return `<div><code>${esc(ip)}</code>${e ? `<span class="muted"> · PTR: ${esc(e.ptr || "none found")}</span>` : ""}</div>`;
+        if (!e) return `<div><code>${esc(ip)}</code></div>`;
+        // A PTR answer we could not read is not the same as a host with no
+        // reverse DNS; say which one happened.
+        const ptrText = e.dns
+          ? "PTR inconclusive (DNS trouble)"
+          : `PTR: ${e.ptr || "none found"}`;
+        return `<div><code>${esc(ip)}</code><span class="muted"> · ${esc(ptrText)}</span></div>`;
       })
       .join("");
 

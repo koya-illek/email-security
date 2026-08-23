@@ -50,6 +50,17 @@ try {
   await waitForWorker();
   assert.equal((await fetch(base, { method: 'HEAD' })).status, 200, 'HEAD serves the app shell');
   assert.equal((await fetch(base + '/api/health', { method: 'HEAD' })).status, 200, 'HEAD probes the health endpoint');
+
+  // Machine surfaces must answer with the documented JSON error envelope.
+  const wrongMethod = await fetch(base + '/api/check');
+  assert.equal(wrongMethod.status, 405, 'known API path hit with the wrong verb answers 405');
+  assert.equal(wrongMethod.headers.get('allow'), 'POST', 'Allow lists supported methods');
+  assert.match((await wrongMethod.json()).error, /Method GET is not allowed/, '405 body stays parseable JSON');
+  const unknownApi = await fetch(base + '/api/nope');
+  assert.equal(unknownApi.status, 404, 'unknown API paths answer 404');
+  assert.ok(unknownApi.headers.get('content-type').includes('application/json'), 'unknown API paths stay JSON');
+  assert.deepEqual(await unknownApi.json(), { error: 'Not found' });
+
   const evaluationCases = [
     ['IPv4 pass', 'v=spf1 ip4:192.0.2.0/24 -all', '192.0.2.44', 'pass'],
     ['IPv4 fail', 'v=spf1 ip4:192.0.2.0/24 -all', '198.51.100.7', 'fail'],
@@ -104,7 +115,10 @@ try {
   // date-based (2023…) DKIM selectors, so an exhausted-before-DKIM run shows
   // up as zero discovered selectors.
   const worstCase = await post('/api/check', { domain: 'gmail.com' });
-  assert.equal(worstCase.spf.status, 'pass', 'gmail.com SPF should resolve within budget');
+  // gmail.com publishes `v=spf1 redirect=_spf.google.com` and the target ends
+  // in ~all, so the honest terminal-strength verdict is warn (soft fail), not
+  // the pass this record earned before redirect strength was evaluated.
+  assert.equal(worstCase.spf.status, 'warn', 'gmail.com SPF resolves within budget to its real ~all strength');
   assert.equal(worstCase.spf.unknown, false, 'gmail.com SPF must not be inconclusive');
   assert.ok(
     (worstCase.dkim.selectors || []).length > 0,
@@ -165,21 +179,20 @@ try {
   assert.equal(oversizedResponse.status, 413);
   assert.equal(oversizedResponse.headers.get('access-control-allow-origin'), '*');
 
+  // Standard-limiter warmup: /api/header/analyze is the cheapest POST route
+  // (stateless, no DNS), and record validation moved to the expensive class.
   const runToken = `${process.pid}-${Date.now()}`;
   const client = `conformance-${runToken}-standard`;
+  const standardBody = { headers: 'From: sender@example.com\r\n' };
   for (let attempt = 0; attempt < 60; attempt++) {
-    const response = await postResponse('/api/records/validate', {
-      type: 'spf', domain: '', record: 'v=spf1 -all'
-    }, { 'CF-Connecting-IP': client });
+    const response = await postResponse('/api/header/analyze', standardBody, { 'CF-Connecting-IP': client });
     assert.equal(response.status, 200, `rate-limit warmup request ${attempt + 1}`);
   }
   assert.equal((await fetch(base + '/api/health', { headers: { 'CF-Connecting-IP': client } })).status, 200);
-  assert.equal((await fetch(base + '/api/records/validate', {
+  assert.equal((await fetch(base + '/api/header/analyze', {
     method: 'OPTIONS', headers: { 'CF-Connecting-IP': client }
   })).status, 200);
-  const limited = await postResponse('/api/records/validate', {
-    type: 'spf', domain: '', record: 'v=spf1 -all'
-  }, { 'CF-Connecting-IP': client });
+  const limited = await postResponse('/api/header/analyze', standardBody, { 'CF-Connecting-IP': client });
   assert.equal(limited.status, 429);
   assert.match(limited.headers.get('retry-after') || '', /^\d+$/);
   assert.equal(limited.headers.get('access-control-allow-origin'), '*');
@@ -209,7 +222,7 @@ try {
   assert.match(expensiveLimited.headers.get('retry-after') || '', /^\d+$/);
   assert.equal(expensiveLimited.headers.get('access-control-allow-origin'), '*');
 
-  console.log(`Conformance corpus passed: ${evaluationCases.length + 10} cases plus request-boundary and rate-limit checks`);
+  console.log(`Conformance corpus passed: ${evaluationCases.length + 12} cases plus request-boundary and rate-limit checks`);
 } finally {
   worker.kill('SIGTERM');
 }
