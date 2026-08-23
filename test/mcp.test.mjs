@@ -43,9 +43,16 @@ test('email MCP returns structured tool output', async () => {
   assert.equal(body.result.isError, false);
 });
 
-test('email MCP accepts notifications and rejects its optional GET stream', async () => {
-  const notification = await handleMcp(rpcRequest('notifications/initialized', {}, undefined), async () => ({}));
-  assert.equal(notification.status, 202);
+test('email MCP accepts id-less notifications and rejects its optional GET stream', async () => {
+  // A missing id makes the message a notification regardless of method name;
+  // it is acknowledged with 202 and no body.
+  const notification = new Request('https://email.illek.ie/mcp/v2', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+  });
+  const accepted = await handleMcp(notification, async () => ({}));
+  assert.equal(accepted.status, 202);
   const get = await handleMcp(new Request('https://email.illek.ie/mcp'), async () => ({}));
   assert.equal(get.status, 405);
   assert.equal(get.headers.get('x-content-type-options'), 'nosniff');
@@ -65,4 +72,54 @@ test('email MCP negotiates supported versions and rejects unsupported Accept/ver
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })
   });
   assert.equal((await handleMcp(badAccept, async () => ({}))).status, 406);
+
+  // A JSON-derived media type is still not the advertised one.
+  const patchType = new Request('https://email.illek.ie/mcp/v2', {
+    method: 'POST', headers: { 'Content-Type': 'application/json-patch+json', Accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })
+  });
+  assert.equal((await handleMcp(patchType, async () => ({}))).status, 415);
+});
+
+test('email MCP separates parse errors from structurally invalid requests', async () => {
+  const garbage = new Request('https://email.illek.ie/mcp/v2', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+    body: '{"jsonrpc":"2.0",not json'
+  });
+  const parseResponse = await handleMcp(garbage, async () => ({}));
+  assert.equal(parseResponse.status, 400);
+  assert.equal((await parseResponse.json()).error.code, -32700);
+
+  // A syntactically valid batch is well-formed JSON but not a supported
+  // request object; that is -32600 Invalid Request, and its only member's id
+  // is echoed so the client can correlate the failure.
+  const batch = new Request('https://email.illek.ie/mcp/v2', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+    body: JSON.stringify([{ jsonrpc: '2.0', id: 7, method: 'ping' }])
+  });
+  const batchResponse = await handleMcp(batch, async () => ({}));
+  assert.equal(batchResponse.status, 400);
+  const batchBody = await batchResponse.json();
+  assert.equal(batchBody.error.code, -32600);
+  assert.equal(batchBody.id, 7);
+});
+
+test('a notification-shaped method carrying an id is answered, never orphaned', async () => {
+  // JSON-RPC requires every request (any message with an id) to receive a
+  // response; answering 202 left strict clients waiting on the id forever.
+  const response = await handleMcp(rpcRequest('notifications/initialized', {}, 9), async () => ({}));
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error.code, -32600);
+  assert.equal(body.id, 9);
+});
+
+test('oversized MCP bodies answer 413 instead of a fake parse error', async () => {
+  const oversized = new Request('https://email.illek.ie/mcp/v2', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'x', arguments: { pad: 'y'.repeat(290 * 1024) } } })
+  });
+  const response = await handleMcp(oversized, async () => ({}));
+  assert.equal(response.status, 413);
+  assert.match((await response.json()).error.message, /280 KiB/);
 });

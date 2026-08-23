@@ -29,24 +29,47 @@ async function handleMcp(request, execute) {
   if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
     return rpcError(null, -32600, 'Accept must include application/json and text/event-stream', 406);
   }
-  if (!(request.headers.get('Content-Type') || '').toLowerCase().includes('application/json')) {
+  const contentType = (request.headers.get('Content-Type') || '').toLowerCase().split(';')[0].trim();
+  if (contentType !== 'application/json') {
     return rpcError(null, -32600, 'Content-Type must be application/json', 415);
   }
 
+  // Parse failure (-32700) and structural invalidity (-32600) are distinct
+  // JSON-RPC conditions: garbage bytes are not a well-formed-but-invalid
+  // request, and clients debug them differently.
   let message;
   try {
     message = await readMessage(request);
   } catch (error) {
+    if (error instanceof MessageTooLargeError) {
+      return rpcError(null, -32600, error.message, 413);
+    }
     return rpcError(null, -32700, error instanceof Error ? error.message : 'Invalid JSON', 400);
   }
-  if (message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
-    return rpcError(message.id ?? null, -32600, 'Invalid JSON-RPC request', 400);
+  if (!isPlainObject(message)) {
+    // JSON-RPC 2.0 arrays are batch requests. They were legal under the
+    // 2024-11-5 revision and removed in 2025-06-18+; this server rejects
+    // them outright because one rate-limited HTTP request must not execute
+    // several tool calls under a single limiter token.
+    const batchId = Array.isArray(message) && message.length === 1 && isPlainObject(message[0])
+      ? message[0].id ?? null
+      : null;
+    return rpcError(batchId, -32600, 'Batch requests are not supported; send one JSON-RPC message per request', 400);
   }
-  if (message.method.startsWith('notifications/') || message.id === undefined) {
+  if (message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
+    return rpcError(isPlainObject(message) ? message.id ?? null : null, -32600, 'Invalid JSON-RPC request', 400);
+  }
+  // Presence of an id makes a message a request that MUST be answered, even
+  // when the method is named like a notification; replying 202 would leave
+  // strict clients waiting forever on that id.
+  if (message.id === undefined) {
     return new Response(null, {
       status: 202,
       headers: { ...MCP_SECURITY_HEADERS, 'Cache-Control': 'no-store' }
     });
+  }
+  if (message.method.startsWith('notifications/')) {
+    return rpcError(message.id, -32600, 'Notification methods must not carry an id', 400);
   }
 
   if (message.method === 'initialize') {
@@ -200,11 +223,22 @@ function tools() {
   ];
 }
 
+class MessageTooLargeError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'MessageTooLargeError';
+  }
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 async function readMessage(request) {
   // Stream with the same byte cap the REST paths use instead of buffering
   // the whole body via arrayBuffer() before checking the limit.
   const reader = request.body?.getReader?.();
-  if (!reader) throw new Error('Invalid JSON-RPC request');
+  if (!reader) throw new Error('Request body is required');
   const chunks = [];
   let totalBytes = 0;
   while (true) {
@@ -213,19 +247,21 @@ async function readMessage(request) {
     totalBytes += value.byteLength;
     if (totalBytes > MAX_MCP_REQUEST_BYTES) {
       await reader.cancel();
-      throw new Error('MCP request exceeds the 280 KiB limit');
+      throw new MessageTooLargeError('MCP request exceeds the 280 KiB limit');
     }
     chunks.push(value);
   }
+  return JSON.parse(new TextDecoder().decode(bytes(chunks, totalBytes)));
+}
+
+function bytes(chunks, totalBytes) {
   const bytes = new Uint8Array(totalBytes);
   let offset = 0;
   for (const chunk of chunks) {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  const parsed = JSON.parse(new TextDecoder().decode(bytes));
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid JSON-RPC request');
-  return parsed;
+  return bytes;
 }
 
 function rpcResult(id, result, version = MCP_PROTOCOL_VERSION) {
