@@ -43,8 +43,10 @@ function stubDb({ selectRow = null, selectThrows = false, insertFails = false } 
   };
 }
 
-test('loadReport returns null without a database binding or a malformed id', async () => {
-  assert.equal(await loadReport({}, '1234567890abcdef'), null);
+test('loadReport treats a missing database binding as storage trouble, not absence', async () => {
+  // A well-formed id promises a retrievable report; without usable storage
+  // that is a failure (503), while only malformed ids may answer "absent".
+  await assert.rejects(() => loadReport({}, '1234567890abcdef'), ReportStorageError);
   assert.equal(await loadReport({ DB: stubDb() }, 'short'), null);
   assert.equal(await loadReport({ DB: stubDb() }, 'not-a-report-id!!'), null);
 });

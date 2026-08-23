@@ -63,7 +63,13 @@ async function storeReport(env, report) {
 }
 
 async function loadReport(env, id) {
-  if (!env?.DB || typeof env.DB.prepare !== 'function' || !REPORT_ID_RE.test(id)) return null;
+  if (!REPORT_ID_RE.test(id)) return null;
+  if (!env?.DB || typeof env.DB.prepare !== 'function') {
+    // A missing or unusable binding is storage trouble. Answering "not found"
+    // here would tell every share-link visitor their report is gone while the
+    // row may be intact; only absence and expiry are allowed to say that.
+    throw new ReportStorageError();
+  }
   let row;
   try {
     row = await env.DB.prepare(
