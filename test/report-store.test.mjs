@@ -121,14 +121,12 @@ test('generated report ids always satisfy the retrieval pattern', () => {
 });
 
 test('report ids carry no UUID structure so they cannot be fingerprinted as truncated UUIDs', () => {
-  // Truncated UUIDv4s always show version nibble '4' at index 8 and a
-  // constrained variant nibble at index 12; bearer credentials should be
-  // indistinguishable from uniform randomness.
-  for (let i = 0; i < 50; i++) {
-    const id = generateReportId();
-    assert.notEqual(id[8], '4', 'version nibble must not be pinned');
-    assert.match(id, /^[0-9a-f]{16}$/);
-  }
+  // Truncated UUIDv4s pin the version nibble at index 8 ('4') and constrain
+  // the variant nibble at index 12; bearer credentials should be
+  // indistinguishable from uniform randomness, so those positions must vary.
+  const ids = Array.from({ length: 50 }, () => generateReportId());
+  assert.ok(new Set(ids.map(id => id[8])).size > 1, 'version-nibble position must vary');
+  assert.ok(new Set(ids.map(id => id[12])).size > 1, 'variant-nibble position must vary');
 });
 
 test('report routes keep absence and storage failure distinct end to end', () => {
