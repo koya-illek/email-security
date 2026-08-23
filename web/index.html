@@ -41,6 +41,9 @@
   </header>
 
   <main id="main-content" tabindex="-1">
+    <!-- Completed analyses announce one short summary line here instead of
+         dumping their whole report into a polite live region. -->
+    <div class="sr-only" id="analysis-status" role="status" aria-live="polite"></div>
     <noscript><p class="noscript-note">These analysis tools need JavaScript. Anything you submit is sent to this site's API for DNS and header analysis; nothing runs locally.</p></noscript>
     <section class="hero" id="home">
       <h1>Check every DNS record<br><em>that protects your mail.</em></h1>
@@ -111,7 +114,7 @@
 
         <div class="metrics" id="domain-metrics"></div>
 
-        <div class="results-accordion" id="domain-results" aria-live="polite"></div>
+        <div class="results-accordion" id="domain-results"></div>
       </section>
     </section>
 
@@ -206,7 +209,7 @@
         </div>
       </div>
 
-      <section class="report hidden" id="spf-report" aria-live="polite">
+      <section class="report hidden" id="spf-report">
         <div class="inspector-summary" id="spf-summary"></div>
         <div id="spf-detail"></div>
       </section>
@@ -367,7 +370,7 @@
         <p>Interpreting receiver results and delivery hops…</p>
       </div>
 
-      <div id="header-results" aria-live="polite"></div>
+      <div id="header-results"></div>
     </section>
 
     <section class="principles" id="principles">

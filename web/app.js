@@ -191,6 +191,17 @@
     el.scrollIntoView({ behavior: prefersReducedMotion.matches ? "auto" : "smooth", block: "start" });
   }
 
+  // Completed analyses swap whole report sections into the page; announcing
+  // those containers verbatim buries screen-reader users in markup. The
+  // hidden status region carries one short completion line instead, and the
+  // clear-then-set dance re-announces identical retry messages.
+  const analysisStatusRegion = $("#analysis-status");
+  function announceAnalysis(message) {
+    if (!analysisStatusRegion) return;
+    analysisStatusRegion.textContent = "";
+    setTimeout(() => { analysisStatusRegion.textContent = message; }, 50);
+  }
+
   // Numeric-only dates ("9/5/2026") are ambiguous across locales; a bearer
   // link's expiry must read the same way for everyone.
   function longDate(value) {
@@ -391,6 +402,9 @@
 
     domainReport.classList.remove("hidden");
     revealResults(domainReport);
+    announceAnalysis(
+      `Analysis of ${d.domain || "the domain"} complete. Security score ${score === null ? "unavailable" : `${score} out of 100`}, confidence ${d.score_confidence || "unknown"}.`
+    );
   }
 
   function setShareUnavailable(note, button) {
@@ -683,6 +697,10 @@
       prefillSpfBuilder(d.domain, safePreview ? f.record : f.originalRecord);
       selectTool("builder");
     };
+
+    announceAnalysis(
+      `SPF inspection of ${d.domain} complete. ${recursive} recursive lookups, preview uses ${f.flattenedLookups}.`
+    );
   }
 
   // ─── Record Builder ──────────────────────────────────────────────
@@ -1199,6 +1217,7 @@
 
     headerResults.innerHTML = html;
     headerError.classList.add("hidden");
+    announceAnalysis(`Header analysis complete. Verdict: ${summary.verdict}.`);
   }
 
   function renderHop(h, enrichment) {
@@ -1314,6 +1333,9 @@
         updateBatchRejectedNote(d.validation);
         batchReport.classList.remove("hidden");
         revealResults(batchReport);
+        announceAnalysis(
+          `Batch comparison complete. ${Array.isArray(d.results) ? d.results.length : 0} domains compared.`
+        );
       }
     } catch (err) {
       if (generation === batchGeneration.current()) {

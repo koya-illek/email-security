@@ -225,6 +225,25 @@ test('an oversized header paste is refused locally without spending an upload', 
   expect(analyzeRequests).toBe(0);
 });
 
+test('completed analyses announce one concise summary instead of the whole report', async ({ page }) => {
+  await page.route('**/api/check', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(domainReport('v=spf1 -all'))
+  }));
+  await page.goto('/');
+  await page.getByLabel('Domain to check').fill('example.com');
+  await page.getByRole('button', { name: 'Check security' }).click();
+
+  const status = page.locator('#analysis-status');
+  await expect(status).toContainText('Analysis of example.com complete');
+  await expect(status).toContainText('80 out of 100');
+  // The report containers themselves must stay outside the live-region tree.
+  for (const id of ['#domain-results', '#spf-report', '#header-results']) {
+    await expect(page.locator(id)).not.toHaveAttribute('aria-live');
+  }
+});
+
 test('a shape-drifted stored report degrades to unavailable evidence instead of crashing', async ({ page }) => {
   // Share links replay any D1 row written within the 14-day retention,
   // regardless of which analysis schema produced it. Missing or drifted
