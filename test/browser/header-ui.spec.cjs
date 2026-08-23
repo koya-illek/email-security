@@ -2,6 +2,7 @@
 
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
+const { analyzeEmailHeaders } = require('../../header-analyzer');
 
 const goodHeaders = [
   'From: Example Billing <billing@example.com>',
@@ -81,6 +82,19 @@ test('does not present forged-looking pasted claims as an unqualified success', 
   await expect(page.locator('#header-results')).toContainText('No Received chain found');
 });
 
+test('puts a multi-domain From warning ahead of reported authentication passes', async ({ page }) => {
+  await page.goto('/#headers');
+  await page.getByLabel('Complete message headers').fill([
+    'From: Accounts <accounts@example.com>, Payments <payments@evil.test>',
+    'Authentication-Results: mx.receiver.example; spf=pass; dkim=pass header.d=example.com; dmarc=pass'
+  ].join('\r\n'));
+  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+
+  await expect(page.locator('.trust-banner')).toHaveClass(/fail/);
+  await expect(page.locator('.trust-banner strong')).toHaveText('Suspicious header structure found');
+  await expect(page.locator('#header-results')).toContainText('DMARC validation is not normally possible');
+});
+
 test('keeps every tool tab visible on narrow screens', async ({ page }) => {
   await page.goto('/#headers');
   const viewport = page.viewportSize();
@@ -132,12 +146,34 @@ test('has no automated accessibility violations on the tool panels', async ({ pa
   let results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
 
+  await page.route('**/api/header/analyze', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(analyzeEmailHeaders(goodHeaders))
+  }));
   await page.goto('/?panel=audit-headers#headers');
   await page.getByLabel('Complete message headers').fill(goodHeaders);
   await page.getByRole('button', { name: 'Analyze Headers' }).click();
   await expect(page.locator('.trust-banner')).toBeVisible();
   results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
+});
+
+test('record-builder tabs expose selection and support arrow-key navigation', async ({ page }) => {
+  await page.goto('/#builder');
+  const spfTab = page.getByRole('tab', { name: 'SPF Builder' });
+  const dmarcTab = page.getByRole('tab', { name: 'DMARC Planner' });
+
+  await expect(spfTab).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#builder-spf')).toBeVisible();
+  await expect(page.locator('#builder-dmarc')).toBeHidden();
+
+  await spfTab.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(dmarcTab).toBeFocused();
+  await expect(dmarcTab).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#builder-spf')).toBeHidden();
+  await expect(page.locator('#builder-dmarc')).toBeVisible();
 });
 
 test('fresh share-link navigation renders domain and batch reports after DOM boot', async ({ page }) => {
@@ -462,7 +498,7 @@ test('an HTTP-error validation answer blocks copying in both builders', async ({
   await expect(page.locator('#spf-builder-output')).not.toContainText('Valid record');
   await expect(page.locator('#spf-builder-output')).not.toContainText('undefined');
 
-  await page.getByRole('button', { name: 'DMARC Planner' }).click();
+  await page.getByRole('tab', { name: 'DMARC Planner' }).click();
   await page.locator('#dmarc-domain').fill('example.com');
   const dmarcCopy = page.locator('#dmarc-builder-output .copy-btn');
   await expect(dmarcCopy).toBeDisabled();

@@ -99,6 +99,16 @@ await Promise.all([
     assert.match(html, /<noscript><p class="noscript-note">[\s\S]+?<\/noscript>/i);
   }),
 
+  check('nested record-builder tabs expose selection and panel relationships', () => {
+    assert.match(html, /class="builder-tabs"[^>]*role="tablist"[^>]*aria-label="Record type"/i);
+    for (const name of ['spf', 'dmarc']) {
+      assert.match(html, new RegExp(`<button[^>]*id="tab-builder-${name}"[^>]*role="tab"[^>]*aria-controls="builder-${name}"`));
+      assert.match(html, new RegExp(`<section[^>]*id="builder-${name}"[^>]*role="tabpanel"[^>]*aria-labelledby="tab-builder-${name}"`));
+    }
+    assert.match(html, /id="tab-builder-spf"[^>]*aria-selected="true"/i);
+    assert.match(html, /id="tab-builder-dmarc"[^>]*aria-selected="false"[^>]*tabindex="-1"/i);
+  }),
+
   check('favicon and social card resolve', async () => {
     const favicon = html.match(/<link\s+rel="icon"\s+href="([^"]+)"/i)?.[1];
     assert.ok(favicon, 'favicon missing');

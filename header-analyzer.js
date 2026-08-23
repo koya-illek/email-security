@@ -22,6 +22,50 @@ function domainFromAddress(value) {
   return normalizeDomain((bracketed || bare || [])[1]);
 }
 
+function authorDomainsFromField(value) {
+  const text = String(value || '');
+  let commentDepth = 0;
+  let quoted = false;
+  let escaped = false;
+  let visible = '';
+
+  // Comments can contain address-like text. Remove them before extracting
+  // Author Domains so "Alice (old alice@example.net) <alice@example.com>"
+  // stays a single-domain From field. Nested comments and quoted parentheses
+  // are handled while the field is still raw boundary data.
+  for (const character of text) {
+    if (escaped) {
+      escaped = false;
+      if (!commentDepth) visible += character;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      if (!commentDepth) visible += character;
+      continue;
+    }
+    if (!commentDepth && character === '"') quoted = !quoted;
+    if (!quoted && character === '(') {
+      commentDepth += 1;
+      continue;
+    }
+    if (!quoted && commentDepth && character === ')') {
+      commentDepth -= 1;
+      continue;
+    }
+    if (!commentDepth) visible += character;
+  }
+
+  // Quoted display names may also contain address-like text. The actual
+  // mailbox remains outside the display name or inside angle brackets.
+  const withoutDisplayNames = visible.replace(/"(?:\\.|[^"\\])*"/g, '');
+  return [...new Set(
+    [...withoutDisplayNames.matchAll(/@([^\s<>,;\]]+)/g)]
+      .map(match => normalizeDomain(match[1]))
+      .filter(Boolean)
+  )];
+}
+
 function organisationalDomain(domain) {
   const clean = normalizeDomain(domain);
   return getDomain(clean, { allowPrivateDomains: true }) || clean;
@@ -329,21 +373,16 @@ function analyzeEmailHeaders(raw) {
       recommendation: 'Treat the message as malformed or suspicious. Do not rely on the displayed sender without independent verification.'
     });
   } else {
-    // RFC 5322 §3.6.2 allows one mailbox; a comma-separated list in a single
-    // From field is a known phishing shape that DMARC alignment cannot
-    // resolve, because there is no single author domain to align against.
-    const unquoted = String(from || '').replace(/"[^"]*"/g, '');
-    const fromDomains = [...new Set(
-      [...unquoted.matchAll(/@([^\s<>,;\]]+)/g)]
-        .map(match => normalizeDomain(match[1]))
-        .filter(Boolean)
-    )];
-    if (fromDomains.length > 1) {
+    // RFC 9989 §5.3.1 normally stops DMARC validation when RFC5322.From
+    // contains more than one Author Domain. Several mailboxes at the same
+    // domain still yield one Author Domain and remain unambiguous here.
+    const authorDomains = authorDomainsFromField(from);
+    if (authorDomains.length > 1) {
       checks.push({
         status: 'fail',
-        title: 'From field lists multiple addresses',
-        detail: `One From field contains several addresses (${fromDomains.join(', ')}); the claimed author is ${fromDomain || 'unparsed'}.`,
-        recommendation: 'Treat the message as malformed or suspicious. A compliant From field names exactly one mailbox.'
+        title: 'From field lists multiple domains',
+        detail: `RFC 9989 Author Domain extraction found several domains (${authorDomains.join(', ')}), so DMARC validation is not normally possible.`,
+        recommendation: 'Treat the receiver-reported DMARC result as ambiguous. Verify the visible authors and the Sender field before trusting the message.'
       });
     }
   }
@@ -418,14 +457,21 @@ function analyzeEmailHeaders(raw) {
   }
   const passCount = [spf, dkim, dmarc].filter(item => item?.result === 'pass').length;
   const failCount = [spf, dkim, dmarc].filter(item => ['fail', 'softfail', 'permerror', 'policy'].includes(item?.result)).length;
-  const hasFailure = failCount || checks.some(check => check.status === 'fail');
+  const headerFailure = checks.some(check => check.status === 'fail');
+  const hasFailure = failCount || headerFailure;
   const hasWarning = checks.some(check => check.status === 'warn');
   const status = hasFailure ? 'fail' : hasWarning ? 'warn' : passCount === 3 ? 'pass' : authHeaders.length ? 'warn' : 'info';
 
   return {
     summary: {
       status,
-      verdict: failCount ? 'Authentication problems reported' : passCount === 3 ? 'All three methods reported pass' : 'Authentication evidence incomplete',
+      verdict: failCount
+        ? 'Authentication problems reported'
+        : headerFailure
+          ? 'Suspicious header structure found'
+          : passCount === 3
+            ? 'All three methods reported pass'
+            : 'Authentication evidence incomplete',
       confidence: authHeaders.length ? 'Reported by pasted headers' : 'No receiver report',
       authservId: selectedAuth.authservId || null,
       passCount,
@@ -461,6 +507,7 @@ module.exports = {
   alignment,
   analyzeEmailHeaders,
   domainFromAddress,
+  authorDomainsFromField,
   organisationalDomain,
   parseHeaders
 };

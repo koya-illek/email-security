@@ -6,6 +6,7 @@ const {
   MAX_HEADER_BYTES,
   alignment,
   analyzeEmailHeaders,
+  authorDomainsFromField,
   domainFromAddress,
   parseHeaders
 } = require('../header-analyzer');
@@ -112,21 +113,24 @@ describe('Header Analyzer', () => {
     assert.equal(result.checks.some(check => check.title === 'Delivery timestamps are out of sequence'), true);
   });
 
-  it('flags several addresses inside a single From field', () => {
+  it('flags several Author Domains inside a single From field', () => {
     const result = analyzeEmailHeaders([
       'From: a@example.com, b@evil.example',
       'Authentication-Results: mx.receiver.example; spf=pass; dkim=pass header.d=example.com; dmarc=pass'
     ].join('\r\n'));
     assert.equal(result.summary.status, 'fail');
-    assert.equal(result.checks.some(check => check.title === 'From field lists multiple addresses'), true);
+    assert.equal(result.summary.verdict, 'Suspicious header structure found');
+    assert.equal(result.checks.some(check => check.title === 'From field lists multiple domains'), true);
   });
 
-  it('does not treat one quoted display name plus one address as multi-address', () => {
+  it('does not treat display names, comments, or same-domain mailboxes as extra Author Domains', () => {
+    assert.deepEqual(authorDomainsFromField('Alice (old alice@legacy.example) <alice@example.com>'), ['example.com']);
+    assert.deepEqual(authorDomainsFromField('Alice <alice@example.com>, Bob <bob@example.com>'), ['example.com']);
     const result = analyzeEmailHeaders([
-      'From: "billing@example.com accounts" <billing@example.com>',
+      'From: "billing@example.com accounts" (old billing@legacy.example) <billing@example.com>',
       'Authentication-Results: mx.receiver.example; spf=pass'
     ].join('\r\n'));
-    assert.equal(result.checks.some(check => check.title === 'From field lists multiple addresses'), false);
+    assert.equal(result.checks.some(check => check.title === 'From field lists multiple domains'), false);
   });
 
   describe('hop IP extraction', () => {

@@ -222,12 +222,12 @@
         <span class="evidence-badge">DERIVED</span>
       </div>
 
-      <div class="builder-tabs">
-        <button class="builder-tab active" data-builder="spf" type="button">SPF Builder</button>
-        <button class="builder-tab" data-builder="dmarc" type="button">DMARC Planner</button>
+      <div class="builder-tabs" role="tablist" aria-label="Record type">
+        <button class="builder-tab active" id="tab-builder-spf" data-builder="spf" type="button" role="tab" aria-controls="builder-spf" aria-selected="true">SPF Builder</button>
+        <button class="builder-tab" id="tab-builder-dmarc" data-builder="dmarc" type="button" role="tab" aria-controls="builder-dmarc" aria-selected="false" tabindex="-1">DMARC Planner</button>
       </div>
 
-      <section class="panel builder-pane active" id="builder-spf">
+      <section class="panel builder-pane active" id="builder-spf" role="tabpanel" aria-labelledby="tab-builder-spf">
         <div class="form-grid">
           <div class="field full">
             <label for="builder-domain">Domain</label>
@@ -278,7 +278,7 @@
         <div id="spf-builder-output"></div>
       </section>
 
-      <section class="panel builder-pane" id="builder-dmarc">
+      <section class="panel builder-pane" id="builder-dmarc" role="tabpanel" aria-labelledby="tab-builder-dmarc" hidden>
         <div class="form-grid">
           <div class="field full">
             <label for="dmarc-domain">Domain</label>

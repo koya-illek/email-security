@@ -84,14 +84,36 @@
   selectTool(initialTab, false, false);
 
   // ─── Builder sub-tabs ────────────────────────────────────────────
-  $$(".builder-tab").forEach((x) =>
-    x.addEventListener("click", () => {
-      $$(".builder-tab").forEach((y) => y.classList.toggle("active", y === x));
-      $$(".builder-pane").forEach((y) =>
-        y.classList.toggle("active", y.id === "builder-" + x.dataset.builder)
-      );
-    })
+  function selectBuilder(name) {
+    $$(".builder-tab").forEach((tab) => {
+      const active = tab.dataset.builder === name;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+      tab.tabIndex = active ? 0 : -1;
+    });
+    $$(".builder-pane").forEach((pane) => {
+      const active = pane.id === "builder-" + name;
+      pane.classList.toggle("active", active);
+      pane.hidden = !active;
+    });
+  }
+
+  $$(".builder-tab").forEach((tab) =>
+    tab.addEventListener("click", () => selectBuilder(tab.dataset.builder))
   );
+
+  $(".builder-tabs")?.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const tabs = $$(".builder-tab");
+    const current = tabs.indexOf(document.activeElement);
+    const next = event.key === "Home" ? 0
+      : event.key === "End" ? tabs.length - 1
+      : event.key === "ArrowRight" ? (current + 1) % tabs.length
+      : (current - 1 + tabs.length) % tabs.length;
+    event.preventDefault();
+    selectBuilder(tabs[next].dataset.builder);
+    tabs[next].focus();
+  });
 
   // ─── Methodology dialog ──────────────────────────────────────────
   const methodDialog = $("#method-dialog");
@@ -1245,6 +1267,7 @@
     // A response landing after this click belongs to a discarded batch.
     batchGeneration.next();
     batchInput.value = "";
+    batchTable.innerHTML = "";
     batchReport.classList.add("hidden");
     batchError.classList.add("hidden");
     $("#batch-rejected-note")?.classList.add("hidden");
