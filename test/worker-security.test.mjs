@@ -72,7 +72,23 @@ test("P0 analysis keeps DNS uncertainty, score confidence, and SPF flatten proof
   assert.match(worker, /include terminal .* proven -all subset/);
   // Analysis-output changes invalidate edge-cached reports; a stale version
   // would keep serving superseded verdicts for up to a day after deploy.
-  assert.match(worker, /const CACHE_VERSION = 'v9-dmarc-sp-spf-redirect'/);
+  assert.match(worker, /const CACHE_VERSION = 'v10-ptr-honesty'/);
+});
+
+test("PTR observations keep transient DNS trouble distinct from authoritative absence", () => {
+  // A SERVFAIL or timeout on the PTR query is not an observation about the
+  // host; rendering it as "No PTR record" would pin resolver trouble onto a
+  // mail host for as long as the report lives. Same discipline enrichIp
+  // already follows for hop enrichment.
+  const checkPtrBody = worker.slice(worker.indexOf("async function checkPTR("), worker.indexOf("async function analyzeSPF("));
+  assert.ok(checkPtrBody.length > 0, "checkPTR must exist");
+  assert.match(checkPtrBody, /const ptrDefinitive = \['ok', 'nodata', 'nxdomain'\]\.includes\(ptrDns\.status\)/);
+  assert.match(checkPtrBody, /ptrUnknown: !ptrDefinitive/);
+  const analyzePtrBody = worker.slice(worker.indexOf("function analyzePTR("), worker.indexOf("async function fetchMtaStsPolicy("));
+  assert.ok(analyzePtrBody.length > 0, "analyzePTR must exist");
+  assert.match(analyzePtrBody, /result\.ptrUnknown/);
+  assert.match(analyzePtrBody, /did not complete authoritatively/);
+  assert.match(analyzePtrBody, /result\.forwardUnknown/);
 });
 
 test("analysis schedules scored controls before the unscored PTR observation", () => {
