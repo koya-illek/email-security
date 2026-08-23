@@ -435,9 +435,15 @@ async function handleRequest(request, env) {
       }
       if (tool === 'build_email_record') return { ...(await buildEmailRecord(args, requestBudget)), request_budget: requestBudget.snapshot() };
       if (tool === 'enrich_email_hops') {
-        if (!Array.isArray(args.ips)) throw new Error('ips must be an array');
-        const ips = [...new Set(args.ips)].filter(isPublicIpAddress).slice(0, 10);
-        return { enriched: await Promise.all(ips.map(ip => enrichIp(ip, requestBudget))), limit: 10, request_budget: requestBudget.snapshot() };
+        // Same contract as POST /api/header/enrich and the tool's own
+        // uniqueItems schema: reject rather than silently dedupe, so agents
+        // see one behavior across both surfaces.
+        if (!Array.isArray(args.ips) || args.ips.length > 10 || args.ips.some(ip => typeof ip !== 'string' || !isPublicIpAddress(ip))) {
+          throw new Error('ips must contain up to 10 unique public IPv4 or IPv6 addresses');
+        }
+        const cleanIps = [...new Set(args.ips)];
+        if (cleanIps.length !== args.ips.length) throw new Error('ips must not contain duplicates');
+        return { enriched: await Promise.all(cleanIps.map(ip => enrichIp(ip, requestBudget))), limit: 10, request_budget: requestBudget.snapshot() };
       }
       if (tool === 'get_email_security_report') {
         const reportId = String(args.reportId || '');

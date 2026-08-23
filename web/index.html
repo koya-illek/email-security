@@ -21,7 +21,7 @@
   <link rel="stylesheet" href="./styles.css">
   <script src="./config.js"></script>
   <script src="./app.js" defer></script>
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"Email Security Analyzer","url":"https://email.illek.ie/","description":"Audit SPF, DKIM, DMARC, MX, transport security and message-header evidence.","applicationCategory":"SecurityApplication","operatingSystem":"Any","browserRequirements":"Requires a modern web browser"}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"Email Security Analyzer","url":"https://email.illek.ie/","description":"Audit SPF, DKIM, DMARC, MX, transport security and message-header evidence.","applicationCategory":"SecurityApplication","operatingSystem":"Any","browserRequirements":"Requires a modern web browser","offers":{"@type":"Offer","price":"0","priceCurrency":"EUR"}}</script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to email tools</a>
@@ -36,7 +36,7 @@
     </a>
     <nav aria-label="Primary navigation">
       <button class="text-button" id="method-button" type="button">Methodology</button>
-      <a class="status-link" href="#principles"><span></span> Edge observer ready</a>
+      <a class="status-link" href="#principles"><span aria-hidden="true"></span> Evidence-first diagnostics</a>
     </nav>
   </header>
 
@@ -44,7 +44,7 @@
     <!-- Completed analyses announce one short summary line here instead of
          dumping their whole report into a polite live region. -->
     <div class="sr-only" id="analysis-status" role="status" aria-live="polite"></div>
-    <noscript><p class="noscript-note">These analysis tools need JavaScript. Anything you submit is sent to this site's API for DNS and header analysis; nothing runs locally.</p></noscript>
+    <noscript><p class="noscript-note">These analysis tools need JavaScript. With it enabled, checks are sent to this site's API for DNS and header analysis; pasted headers are processed for the request only.</p></noscript>
     <section class="hero" id="home">
       <h1>Check every DNS record<br><em>that protects your mail.</em></h1>
       <p class="hero-copy">Audit SPF, DKIM, DMARC, mail routing and transport security for one domain or a small batch at once. Inspect SPF lookup trees, build safer records, and read message headers with shareable reports that show their working.</p>
@@ -130,7 +130,7 @@
       <form class="trace-form" id="batch-form">
         <label for="batch-input">Domains (one per line, max 3)</label>
         <div class="batch-input-shell">
-          <textarea id="batch-input" placeholder="example.com&#10;anotherdomain.org&#10;thirddomain.net" rows="8" spellcheck="false" inputmode="url"></textarea>
+          <textarea id="batch-input" placeholder="example.com&#10;anotherdomain.org&#10;thirddomain.net" rows="8" spellcheck="false"></textarea>
         </div>
         <div class="form-meta">
           <span>SPF, DKIM, DMARC, MX, Transport compared</span>

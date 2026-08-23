@@ -304,3 +304,12 @@ test("malformed report ids are refused before spending daily retrieval quota", (
   assert.ok(quotaAt !== -1, "daily quota accounting must exist in the retrieval path");
   assert.ok(validateAt < quotaAt, "id validation must precede quota consumption");
 });
+
+test("the MCP enrich tool enforces the same unique-public-IP contract as REST", () => {
+  // The schema promises uniqueItems and public addresses; the dispatch must
+  // reject rather than silently dedupe, matching POST /api/header/enrich.
+  const branch = worker.slice(worker.indexOf("'enrich_email_hops'"), worker.indexOf("'get_email_security_report'"));
+  assert.ok(branch.length > 0, "MCP enrich branch must exist");
+  assert.match(branch, /ips\.length > 10 \|\| args\.ips\.some\(ip => typeof ip !== 'string' \|\| !isPublicIpAddress\(ip\)\)/);
+  assert.match(branch, /ips must not contain duplicates/);
+});
