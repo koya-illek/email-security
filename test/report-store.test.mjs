@@ -111,7 +111,24 @@ test('share metadata and expiry describe an honest bearer link', () => {
 });
 
 test('generated report ids always satisfy the retrieval pattern', () => {
-  for (let i = 0; i < 20; i++) assert.match(generateReportId(), REPORT_ID_RE);
+  const ids = new Set();
+  for (let i = 0; i < 20; i++) {
+    const id = generateReportId();
+    assert.match(id, REPORT_ID_RE);
+    ids.add(id);
+  }
+  assert.equal(ids.size, 20);
+});
+
+test('report ids carry no UUID structure so they cannot be fingerprinted as truncated UUIDs', () => {
+  // Truncated UUIDv4s always show version nibble '4' at index 8 and a
+  // constrained variant nibble at index 12; bearer credentials should be
+  // indistinguishable from uniform randomness.
+  for (let i = 0; i < 50; i++) {
+    const id = generateReportId();
+    assert.notEqual(id[8], '4', 'version nibble must not be pinned');
+    assert.match(id, /^[0-9a-f]{16}$/);
+  }
 });
 
 test('report routes keep absence and storage failure distinct end to end', () => {

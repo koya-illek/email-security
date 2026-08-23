@@ -11,10 +11,12 @@ class ReportStorageError extends Error {
   }
 }
 
-// Generate a 16-character unguessable report ID using crypto.randomUUID
+// Generate a 16-character unguessable report ID. These ids are bearer
+// credentials, so the full 64 bits are uniformly random: a truncated
+// UUIDv4 leaks its version/variant structure in access logs and dumps.
 function generateReportId() {
-  const raw = crypto.randomUUID().replace(/-/g, '');
-  return raw.slice(0, 16);
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function reportExpiry() {

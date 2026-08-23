@@ -1,5 +1,7 @@
 function isLocalDevelopmentHost(hostname) {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.endsWith('.workers.dev');
+  // WHATWG URL keeps brackets in IPv6 hostnames ("[::1]"), so compare the
+  // bracketed spelling too.
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]' || hostname.endsWith('.workers.dev');
 }
 
 function redirectForRequest(request) {

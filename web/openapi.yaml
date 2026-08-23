@@ -258,7 +258,11 @@ components:
       additionalProperties: false
       required: [headers]
       properties:
-        headers: { type: string, maxLength: 262144, description: Complete RFC-style message header block only. }
+        # The analyzer accepts 256 KiB of header text, but the REST transport
+        # caps the whole JSON body at 256 KiB and JSON escaping inflates CRLFs
+        # (\r\n becomes 4 bytes), so ~250,000 characters is the realistic
+        # ceiling for a single header block through this endpoint.
+        headers: { type: string, maxLength: 262144, description: 'Complete RFC-style message header block only. The 256 KiB request-body cap, including JSON escaping, bounds what actually fits.' }
     SpfEvaluationRequest:
       type: object
       additionalProperties: false

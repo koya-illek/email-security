@@ -36,3 +36,12 @@ test('legacy checker alias uses one-hop canonical HTTPS redirect', () => {
 test('canonical HTTPS email requests are not redirected', () => {
   assert.equal(redirectForRequest(new Request('https://email.illek.ie/')), null);
 });
+
+test('local development hosts stay unredirected, including bracketed IPv6', () => {
+  for (const host of ['http://localhost:8787/', 'http://127.0.0.1:8787/', 'http://[::1]:8787/']) {
+    assert.equal(redirectForRequest(new Request(host)), null, `${host} must not be upgraded`);
+  }
+  // The URL API keeps brackets in the hostname; a bare-string comparison
+  // against '::1' never matches it.
+  assert.equal(new URL('http://[::1]:8787/').hostname, '[::1]');
+});
