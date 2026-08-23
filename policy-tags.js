@@ -3,6 +3,13 @@
 
 const DMARC_POLICY_VALUES = ['none', 'quarantine', 'reject'];
 
+// RFC 9989 section 4.8 allows whitespace around the first v= tag but makes
+// the DMARC1 value case-sensitive. A case-insensitive whole-record regex
+// accepts records that receivers must ignore.
+function isDmarcVersionRecord(record) {
+  return /^\s*[vV]\s*=\s*DMARC1(?:\s*;|\s*$)/.test(String(record || ''));
+}
+
 function stripSpfQualifier(part) {
   return String(part || '').replace(/^[+?~-]/, '').toLowerCase();
 }
@@ -44,7 +51,7 @@ function hasSpfMacro(value) {
   return /%\{[^}]*\}/.test(String(value || ''));
 }
 
-// RFC 7489 §6.6.3: when discovery finds the record at an ancestor policy
+// RFC 9989: when discovery finds the record at an ancestor policy
 // domain, receivers apply its sp= value to this author domain when present,
 // falling back to p=. Scoring a subdomain by the parent's p= would report
 // enforcement that does not exist (for example p=reject; sp=none parents).
@@ -55,6 +62,7 @@ function effectiveDmarcPolicy(tags, inherited) {
 
 module.exports = {
   DMARC_POLICY_VALUES,
+  isDmarcVersionRecord,
   stripSpfQualifier,
   spfTerminalTerm,
   countVisibleSpfLookups,

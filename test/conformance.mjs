@@ -138,7 +138,12 @@ try {
     record: 'v=DMARC1; p=reject; t=y; np=quarantine; psd=n; fo=0:1; rua=mailto:dmarc@example.com;'
   });
   assert.equal(current.valid, true);
+  const currentDefaultPsd = await post('/api/records/validate', {
+    type: 'dmarc', domain: '', record: ' V = DMARC1 ; p=reject; psd=u;'
+  });
+  assert.equal(currentDefaultPsd.valid, true, 'RFC 9989 accepts whitespace around v= and the default psd=u value');
   for (const record of [
+    'v=dmarc1; p=reject;',
     'v=DMARC1; p=reject; t=invalid;',
     'v=DMARC1; p=reject; np=banana;',
     'v=DMARC1; p=reject; psd=maybe;'

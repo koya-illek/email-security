@@ -5,7 +5,7 @@
   "main": "worker.js",
   "scripts": {
     "deploy": "node scripts/deploy.mjs",
-    "test": "npm run test:spf && npm run test:headers && npm run test:integration && npm run test:retention && npm run test:security && npm run test:mcp && npm run test:report-store && npm run test:policy-tags",
+    "test": "npm run test:spf && npm run test:headers && npm run test:integration && npm run test:retention && npm run test:security && npm run test:mcp && npm run test:report-store && npm run test:policy-tags && npm run test:dmarc-reporting",
     "check": "wrangler deploy --dry-run",
     "audit:html": "node scripts/audit-html.mjs",
     "test:spf": "node --test test/rfc7208.cjs",
@@ -16,7 +16,8 @@
     "test:security": "node --test test/worker-security.test.mjs test/redirects.test.cjs",
     "test:mcp": "node --test test/mcp.test.mjs",
     "test:report-store": "node --test test/report-store.test.mjs",
-    "test:policy-tags": "node --test test/policy-tags.test.mjs"
+    "test:policy-tags": "node --test test/policy-tags.test.mjs",
+    "test:dmarc-reporting": "node --test test/dmarc-reporting.test.mjs"
   },
   "keywords": [],
   "author": "",

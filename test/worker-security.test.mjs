@@ -211,6 +211,17 @@ test("DMARC honours sp= for inherited records instead of scoring by the parent's
   assert.match(worker, /score \+= dmarc\.policy === 'reject' \? 35 : 30/);
 });
 
+test("domain analysis checks external DMARC report authorisation after scored controls", () => {
+  const analysis = worker.slice(worker.indexOf("async function analyzeDomain("), worker.indexOf("async function discoverDmarcPolicy("));
+  const dkim = analysis.indexOf("await checkDKIMSelectors(");
+  const reporting = analysis.indexOf("await addDmarcReportAuthorisation(dmarc, budget)");
+  const ptr = analysis.indexOf("await checkPTR(");
+  assert.ok(dkim > -1 && reporting > dkim && ptr > reporting, "unscored report authorisation must not starve DKIM");
+  assert.match(analysis, /status === 'authorised'/);
+  assert.match(analysis, /status === 'unauthorised'/);
+  assert.match(analysis, /authorisation is inconclusive/);
+});
+
 test("SPF redirect strength is judged from the redirect target's terminal policy", () => {
   const recursion = worker.slice(worker.indexOf("async function countSpfDnsLookupsRecursive("), worker.indexOf("async function buildSpfFlattenPreview("));
   assert.ok(recursion.length > 0, "recursion must exist");

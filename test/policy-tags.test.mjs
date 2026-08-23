@@ -9,6 +9,7 @@ const {
   spfTerminalTerm,
   countVisibleSpfLookups,
   hasSpfMacro,
+  isDmarcVersionRecord,
   effectiveDmarcPolicy
 } = require("../policy-tags.js");
 
@@ -28,6 +29,13 @@ test("non-inherited records and absent or invalid sp= fall back to p=", () => {
 
 test("the policy value whitelist stays closed", () => {
   assert.deepEqual(DMARC_POLICY_VALUES, ["none", "quarantine", "reject"]);
+});
+
+test("DMARC version discovery accepts RFC whitespace but keeps DMARC1 case-sensitive", () => {
+  assert.ok(isDmarcVersionRecord("v=DMARC1; p=reject"));
+  assert.ok(isDmarcVersionRecord(" V = DMARC1 ; p=reject"));
+  assert.ok(!isDmarcVersionRecord("v=dmarc1; p=reject"));
+  assert.ok(!isDmarcVersionRecord("x=DMARC1; p=reject"));
 });
 
 test("redirect is not counted toward the SPF lookup limit when an all term makes it unreachable", () => {

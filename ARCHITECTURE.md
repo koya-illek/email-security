@@ -1,6 +1,6 @@
 # Email Security Analyzer architecture
 
-Last reviewed: 2026-08-15
+Last reviewed: 2026-08-23
 
 Email Security Analyzer is an evidence-first diagnostic service for public email-domain posture and pasted message headers. It combines standards-aware DNS analysis, bounded policy retrieval, local header interpretation, shareable reports, REST APIs, and MCP tools in one Cloudflare Worker.
 
@@ -49,6 +49,7 @@ flowchart LR
 | --- | --- | --- |
 | Worker router | Serves the site, validates requests, applies security headers and rate controls, dispatches APIs and MCP, retrieves reports, and runs retention cleanup | `worker.js` |
 | Domain analyzer | Coordinates DNS, SPF, DKIM, DMARC, MX, CAA, PTR, MTA-STS, TLS-RPT, scoring, confidence, and budget evidence | `worker.js` |
+| DMARC reporting policy | Compares reporting and policy organisational domains, builds RFC 9990 authorisation names, and keeps positive, negative, and transient DNS results distinct | `dmarc-reporting.js` |
 | Header analyzer | Parses Received, Authentication-Results, Received-SPF, DKIM-Signature, alignment, conflicts, and delivery hops without network access | `header-analyzer.js` |
 | MCP adapter | Maps nine typed MCP tools to the same core functions used by REST | `mcp.js` |
 | Redirect policy | Constrains MTA-STS retrieval and final origin handling | `redirects.js` |
@@ -65,9 +66,9 @@ The core is currently a single Worker module. The internal separation is logical
 3. A request-wide budget reserves at most 45 outbound subrequests.
 4. DNS queries run through structured DNS over HTTPS. NODATA, NXDOMAIN, timeout, SERVFAIL, provider error, and budget exhaustion remain distinct states.
 5. SPF records are parsed case-insensitively. Includes and redirects are traversed within lookup, void, cycle, depth, and request budgets. A record whose terminal strength lives behind `redirect=` is judged by the redirect target's all-term; unresolvable targets fail closed, and sender-macro targets are disclosed as statically unverifiable instead of being queried literally.
-6. DMARC discovery follows the implemented organisational-domain tree walk and validates external reporting authorisation. For records found at an ancestor domain, the effective policy applied to the checked domain is `sp=` when present (RFC 7489 §6.6.3), not the parent's `p=`.
+6. DMARC discovery follows the RFC 9989 tree walk. For records found at an ancestor domain, the effective policy applied to the checked domain is `sp=` when present, not the parent's `p=`.
 7. DKIM checks probe the whole bounded selector catalogue, selectors inferred from SPF and MX first. Absence outside that catalogue is reported as limited coverage.
-8. MX, Null MX, implicit MX fallback, CAA, TLS-RPT, and MTA-STS evidence is collected. Within the shared request budget, scored controls are scheduled first (SPF recursion, then DKIM discovery alongside the MTA-STS policy fetch); the unscored inbound PTR observation runs last on remaining subrequests and is capped at four observations.
+8. MX, Null MX, implicit MX fallback, CAA, TLS-RPT, and MTA-STS evidence is collected. Within the shared request budget, scored controls are scheduled first. SPF recursion runs before the MTA-STS policy fetch and DKIM discovery. External DMARC reporting authorisation and the inbound PTR observation then use the remaining budget. PTR is capped at four observations.
 9. MTA-STS is fetched only from the expected HTTPS origin with redirects rejected, bounded body reads, and an explicit timeout.
 10. Findings feed a deterministic score. Unknown observations reduce confidence rather than receiving definitive failure points.
 11. The response includes raw evidence, checks, recommendations, score confidence, unknown controls, source revision, and request-budget use.
@@ -155,4 +156,5 @@ The analyzer does not prove mail delivery, inspect mailbox contents, monitor ong
 - Worker packaging: `npm run check`
 - REST schema: `web/openapi.yaml`
 - MCP connector schema: `web/mcp-copilot.yaml`
+- DMARC external-report authorisation: `npm run test:dmarc-reporting`
 - RFC corpus: `test/fixtures/rfc7208-tests.yml`

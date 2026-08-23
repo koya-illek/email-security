@@ -17,10 +17,16 @@ const {
 } = require('./report-store');
 const { handleMcp } = require('./mcp');
 const {
+  assessReportAuthorisation,
+  isExternalReportDestination,
+  reportAuthorisationName
+} = require('./dmarc-reporting');
+const {
   stripSpfQualifier,
   spfTerminalTerm,
   countVisibleSpfLookups,
   hasSpfMacro,
+  isDmarcVersionRecord,
   DMARC_POLICY_VALUES,
   effectiveDmarcPolicy
 } = require('./policy-tags');
@@ -33,11 +39,10 @@ const DOH_PROVIDERS = [
 
 const CACHE_TTL = 86400; // 24 hour edge cache
 const POLICY_CACHE_TTL = 86400; // 24 hour cache for policy HTTP fetches
-// Bumped when cached report semantics change in a way stale rows must not
-// outlive: v10 stops 24h edge-cached rows from carrying PTR observations that
-// presented transient resolver failures as authoritative "no PTR", plus
-// transport records that bare version tokens could hide.
-const CACHE_VERSION = 'v10-ptr-honesty';
+// Bump this key whenever report semantics change so a release cannot replay a
+// 24-hour row produced by older analysis code. v11 adds external DMARC report
+// authorisation evidence and RFC 9989 version-token handling.
+const CACHE_VERSION = 'v11-dmarc-reporting';
 const DNS_TIMEOUT_MS = 4500;
 const NORMAL_JSON_BODY_MAX_BYTES = 16 * 1024;
 const HEADER_JSON_BODY_MAX_BYTES = 256 * 1024;
@@ -986,7 +991,7 @@ async function validateDmarcRecord(domain, value, budget = null) {
   });
   const tags = Object.fromEntries(pairs);
 
-  if (pairs[0]?.[0] !== 'v' || pairs[0]?.[1].toUpperCase() !== 'DMARC1') {
+  if (pairs[0]?.[0] !== 'v' || pairs[0]?.[1] !== 'DMARC1') {
     errors.push('DMARC record must begin with v=DMARC1.');
   }
   if (!['none', 'quarantine', 'reject'].includes((tags.p || '').toLowerCase())) {
@@ -997,7 +1002,7 @@ async function validateDmarcRecord(domain, value, budget = null) {
   }
   if (tags.pct) warnings.push('pct= is a historic RFC 7489 tag and is ignored by RFC 9989 receivers; use t=y for testing.');
   if (tags.t && !['y', 'n'].includes(tags.t.toLowerCase())) errors.push('DMARC t= must be y or n.');
-  if (tags.psd && !['y', 'n'].includes(tags.psd.toLowerCase())) errors.push('DMARC psd= must be y or n.');
+  if (tags.psd && !['y', 'n', 'u'].includes(tags.psd.toLowerCase())) errors.push('DMARC psd= must be y, n, or u.');
   ['np', 'sp'].forEach(key => {
     if (tags[key] && !['none', 'quarantine', 'reject'].includes(tags[key].toLowerCase())) {
       errors.push(`DMARC ${key}= must be none, quarantine, or reject.`);
@@ -1025,13 +1030,13 @@ async function validateDmarcRecord(domain, value, budget = null) {
   if (tags.p === 'none') warnings.push('DMARC is in monitoring mode and does not request enforcement.');
   if (record.length > 2048) errors.push('DMARC record is too large to publish safely.');
   if (domain && tags.rua && tags.rua.split(',').every(item => isValidDmarcReportUri(item.trim()))) {
-    const external = parseMailtoList(tags.rua).filter(address => !address.toLowerCase().endsWith(`@${domain}`));
+    const external = parseMailtoList(tags.rua).filter(address => isExternalReportDestination(domain, address));
     for (const address of external) {
-      const destination = address.split('@').pop().toLowerCase();
-      const authName = `${domain}._report._dmarc.${destination}`;
-      const authRecords = await queryDNS(authName, 'TXT', budget);
-      const authorised = authRecords.some(item => /^\s*v=DMARC1\s*;/i.test(item));
-      if (!authorised) warnings.push(`RFC 9990 authorisation was not found at ${authName}.`);
+      const query = reportAuthorisationName(domain, address);
+      const authRecords = await queryDNS(query, 'TXT', budget);
+      const authorisation = assessReportAuthorisation(domain, address, authRecords);
+      if (authorisation.status === 'unauthorised') warnings.push(`RFC 9990 authorisation was not found at ${authorisation.query}.`);
+      if (authorisation.status === 'unknown') warnings.push(`RFC 9990 authorisation at ${authorisation.query} is inconclusive because DNS returned ${authorisation.dnsStatus}.`);
     }
   }
 
@@ -1146,15 +1151,17 @@ async function analyzeDomain(domain, budget = createRequestBudget()) {
   // Scored controls claim the shared budget first: SPF recursion, then the
   // single MTA-STS policy fetch, then DKIM selector discovery. The policy
   // fetch runs before the wide selector fan-out because a one-request reserve
-  // loses that race and transport evidence would read as inconclusive. PTR is
-  // an unscored supplementary observation and runs last on whatever remains;
-  // scheduling it first starved DKIM discovery entirely on multi-MX domains.
+  // loses that race and transport evidence would read as inconclusive. DMARC
+  // external-report authorisation and PTR are unscored supplementary
+  // observations and run last on whatever remains; scheduling them first
+  // starved DKIM discovery entirely on multi-MX domains.
   const spf = await analyzeSPF(domain, spfRecords, budget);
   const dmarc = analyzeDMARC(dmarcDiscovery.records, dmarcDiscovery);
   const mtaStsPolicy = mtaStsRecords.some(r => /^\s*v=STSv1(?:\s*;|\s*$)/i.test(r))
     ? await fetchMtaStsPolicy(domain, budget)
     : null;
   const dkimResults = await checkDKIMSelectors(domain, spf.providers, mxRecords, budget);
+  await addDmarcReportAuthorisation(dmarc, budget);
   const ptrResult = await checkPTR(domain, mxRecords, budget);
 
   const dkim = analyzeDKIM(dkimResults);
@@ -1200,6 +1207,45 @@ async function analyzeDomain(domain, budget = createRequestBudget()) {
   };
 }
 
+async function addDmarcReportAuthorisation(dmarc, budget = null) {
+  const policyDomain = dmarc.policyDomain;
+  const external = policyDomain
+    ? (dmarc.rua || []).filter(address => isExternalReportDestination(policyDomain, address))
+    : [];
+  const observations = [];
+  for (const address of external) {
+    const query = reportAuthorisationName(policyDomain, address);
+    const records = await queryDNS(query, 'TXT', budget);
+    observations.push(assessReportAuthorisation(policyDomain, address, records));
+  }
+  dmarc.reportingAuthorisation = observations;
+  for (const observation of observations) {
+    if (observation.status === 'authorised') {
+      dmarc.checks.push({
+        status: 'pass',
+        title: 'External aggregate reporting authorised',
+        detail: `${observation.destination} authorises reports requested by ${policyDomain}.`,
+        recommendation: ''
+      });
+    } else if (observation.status === 'unauthorised') {
+      dmarc.checks.push({
+        status: 'warn',
+        title: 'External aggregate reporting is not authorised',
+        detail: `No RFC 9990 authorisation was found at ${observation.query}; receivers must ignore ${observation.address}.`,
+        recommendation: `Ask ${observation.destination} to publish the authorisation record, or use a reporting address within the policy domain's organisation.`
+      });
+    } else {
+      dmarc.checks.push({
+        status: 'info',
+        title: 'External aggregate reporting authorisation is inconclusive',
+        detail: `DNS returned ${observation.dnsStatus} for ${observation.query}.`,
+        recommendation: 'Retry before changing the DMARC reporting destination.'
+      });
+    }
+  }
+  return dmarc;
+}
+
 async function discoverDmarcPolicy(domain, budget = null) {
   const labels = domain.split('.');
   const queries = [];
@@ -1216,7 +1262,7 @@ async function discoverDmarcPolicy(domain, budget = null) {
     if (records.dnsStatus === 'servfail' || records.dnsStatus === 'timeout' || records.dnsStatus === 'error') {
       return { records, policyDomain: null, inherited: false, queries, dns: dnsState(records) };
     }
-    const matching = records.filter(record => /^\s*v=DMARC1(?:\s*;|$)/i.test(record));
+    const matching = records.filter(isDmarcVersionRecord);
     // Multiple matching records are discarded at this node by RFC 9989.
     if (matching.length === 1) {
       found.push({ domain: candidate, records, tags: parseTagRecord(matching[0]), dns: dnsState(records) });
@@ -2004,7 +2050,7 @@ async function expandSpfForFlatten(domain, record, context, depth, isRoot = fals
 }
 
 function analyzeDMARC(records, discovery = {}) {
-  const dmarcRecords = records.filter(r => /^\s*v=DMARC1(?:\s*;|$)/i.test(r));
+  const dmarcRecords = records.filter(isDmarcVersionRecord);
   
   if (!dmarcRecords.length) {
     const transient = discovery.dns?.status && !['ok', 'nodata', 'nxdomain'].includes(discovery.dns.status);
@@ -2201,7 +2247,7 @@ function parseTagRecord(record) {
       .filter(Boolean)
       .map(part => {
         const idx = part.indexOf('=');
-        return idx > 0 ? [part.slice(0, idx).toLowerCase(), part.slice(idx + 1).trim().toLowerCase()] : [part.toLowerCase(), ''];
+        return idx > 0 ? [part.slice(0, idx).trim().toLowerCase(), part.slice(idx + 1).trim().toLowerCase()] : [part.toLowerCase(), ''];
       })
   );
 }
