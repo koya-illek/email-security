@@ -542,3 +542,135 @@ test('domain, batch, and SPF panels describe an unreadable service answer instea
   await expect(spfMsg).not.toContainText('Unexpected');
   await expect(spfMsg).not.toContainText('Failed to inspect SPF');
 });
+
+test('a failed re-analysis keeps prior results and never strands a spinner', async ({ page }) => {
+  // The header panel used to inject its spinner into #header-results and
+  // only clear it on success: any failed paste left an eternal "Analyzing…"
+  // animation and destroyed the previous analysis.
+  await page.goto('/#headers');
+  await page.getByLabel('Complete message headers').fill(goodHeaders);
+  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+  await expect(page.locator('.trust-banner')).toContainText('All three methods reported pass');
+
+  await page.route('**/api/header/analyze', route => route.fulfill({
+    status: 502,
+    contentType: 'text/html',
+    body: '<!DOCTYPE html><html><body>bad gateway</body></html>'
+  }));
+  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+
+  await expect(page.locator('#header-error')).toBeVisible();
+  await expect(page.locator('#header-error-msg')).toContainText('unreadable');
+  await expect(page.locator('#header-loading')).toBeHidden();
+  await expect(page.locator('#panel-headers .spinner')).not.toBeVisible();
+  await expect(page.locator('.trust-banner')).toContainText('All three methods reported pass');
+});
+
+test('clearing the batch during a delayed response does not resurrect the report', async ({ page }) => {
+  const batchReport = {
+    results: [{
+      domain: 'example.com', overall_score: 80, overall_status: 'good',
+      spf: { status: 'pass' }, dkim: { status: 'warn' }, dmarc: { status: 'pass' },
+      mx: { status: 'pass' }, transport: { status: 'pass' },
+      request_budget: { exhausted: false }
+    }],
+    validation: { rejected: [] },
+    share: { available: false }
+  };
+  await page.route('**/api/batch', async route => {
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(batchReport) });
+  });
+
+  await page.goto('/#batch');
+  await page.getByLabel('Domains (one per line, max 3)').fill('example.com');
+  await page.getByRole('button', { name: 'Check All Domains' }).click();
+  await expect(page.locator('#batch-loading')).toBeVisible();
+  await page.getByRole('button', { name: 'Clear' }).click();
+  await expect(page.locator('#batch-report')).toBeHidden();
+
+  // The answer arrives after the clear; it must stay discarded.
+  await expect(page.locator('#batch-loading')).toBeHidden();
+  await expect(page.locator('#batch-report')).toBeHidden();
+  await expect(page.locator('#batch-table')).not.toContainText('example.com');
+  await expect(page.locator('#batch-error')).toBeHidden();
+});
+
+test('clearing during hop enrichment reports nothing and throws no internal error', async ({ page }) => {
+  // Clearing mid-enrichment used to dereference a nulled analysis and print
+  // "Cannot read properties of null" in the alert panel.
+  await page.route('**/api/header/enrich', async route => {
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ enriched: [{ ip: '8.8.8.8', ptr: 'dns.google' }], limit: 10 })
+    });
+  });
+  await page.goto('/#headers');
+  await page.getByLabel('Complete message headers').fill(goodHeaders);
+  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+  const enrich = page.getByRole('button', { name: 'Enrich Hops' });
+  await expect(enrich).toBeEnabled();
+  await enrich.click();
+  await page.getByRole('button', { name: 'Clear' }).click();
+
+  await expect(enrich).toBeDisabled();
+  await expect(page.locator('#header-error')).toBeHidden();
+  await expect(page.locator('#header-error-msg')).not.toContainText('Cannot read properties');
+  await expect(page.locator('#header-results')).not.toContainText('dns.google');
+});
+
+test('re-triggering SPF inspection from a report sends exactly one request', async ({ page }) => {
+  // "Inspect SPF" calls requestSubmit(), which ignores the disabled submit
+  // button; duplicate activations used to fire racing inspections. Drive
+  // extra synthetic submits inside the flight window: only the first may
+  // reach the network.
+  let inspectRequests = 0;
+  await page.route('**/api/check', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(domainReport('v=spf1 ip4:192.0.2.1 -all'))
+  }));
+  await page.route('**/api/spf/inspect', async route => {
+    inspectRequests++;
+    await new Promise(resolve => setTimeout(resolve, 600));
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        domain: 'example.com',
+        spf: {
+          status: 'pass', record: 'v=spf1 ip4:192.0.2.1 -all',
+          checks: [{ status: 'pass', title: 'Hard fail (-all)', detail: 'ok', recommendation: '' }],
+          mechanisms: []
+        },
+        flatten: {
+          available: true, safeToPublish: false,
+          record: 'v=spf1 ip4:192.0.2.1 -all', originalRecord: 'v=spf1 ip4:192.0.2.1 -all',
+          originalLookups: 1, flattenedLookups: 1, characterCount: 24,
+          sources: [{ source: 'example.com', mechanisms: [] }],
+          warnings: [], validation: { errors: [] },
+          equivalence: { proven: false }
+        }
+      })
+    });
+  });
+
+  await page.goto('/');
+  await page.getByLabel('Domain to check').fill('example.com');
+  await page.getByRole('button', { name: 'Check security' }).click();
+  await expect(page.locator('#domain-report')).toBeVisible();
+  await page.getByRole('button', { name: 'Inspect SPF' }).first().click();
+  await expect(page.locator('#spf-loading')).toBeVisible();
+
+  await page.evaluate(() => {
+    document.querySelector('#spf-form').requestSubmit();
+    document.querySelector('#spf-form').requestSubmit();
+  });
+  await page.waitForTimeout(100);
+  await expect.poll(() => inspectRequests).toBe(1);
+
+  await expect(page.locator('#spf-report')).toBeVisible({ timeout: 5_000 });
+  await expect.poll(() => inspectRequests, { timeout: 2_000 }).toBe(1);
+});

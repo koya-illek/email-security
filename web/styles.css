@@ -311,6 +311,9 @@ h1 em { color: var(--accent); font-style: normal; font-weight: 500; }
   margin: 0;
   font-size: clamp(32px, 5vw, 54px);
   letter-spacing: -.05em;
+  /* Stored domains can exceed any width budget; without a break rule a long
+     domain clips silently at mobile widths under the page overflow clip. */
+  overflow-wrap: anywhere;
 }
 .report-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
@@ -705,6 +708,21 @@ textarea:focus-visible {
 }
 .field input::placeholder { color: #7d9489; }
 
+/* The provider picker is a fieldset so screen readers announce the six
+   checkboxes as one named group; visually it must stay invisible. */
+.provider-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.provider-fieldset legend {
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 .provider-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1059,4 +1077,37 @@ dialog h2 { margin: 0 0 30px; font-size: 32px; letter-spacing: -.04em; }
     animation-iteration-count: 1 !important;
     transition-duration: .01ms !important;
   }
+}
+@media print {
+  /* The product is dark-on-light inverted; browsers strip backgrounds when
+     printing, which used to leave white text on white paper. Force a light
+     scheme and remove screen-only chrome so reports survive Ctrl+P/PDF. */
+  :root {
+    --bg: #fff;
+    --text: #111;
+    --muted: #444;
+    --line: #bbb;
+  }
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  .site-header, .tool-nav, footer, .hero-cta, form, .form-grid,
+  .header-actions, .report-actions, .skip-link, .grid-field,
+  .noscript-note, .developer-access, .error-panel, .loading-panel,
+  .notice, .privacy-note { display: none !important; }
+  .panel, .collapsible-section, .metric, .score-card,
+  .check-item, .hop-item {
+    background: #fff !important;
+    color: #111 !important;
+    border-color: #bbb !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+  h1, h2, h3, .cs-title, .check-title, strong, small, code, p, span, div {
+    color: #111 !important;
+  }
+  .metric small, .muted, .cs-count, .check-detail { color: #444 !important; }
+  details > summary { list-style: none; }
+  .batch-table-wrap { overflow-x: visible !important; }
 }

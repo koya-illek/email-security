@@ -40,7 +40,7 @@
     </nav>
   </header>
 
-  <main id="main-content">
+  <main id="main-content" tabindex="-1">
     <noscript><p class="noscript-note">These analysis tools need JavaScript. Anything you submit is sent to this site's API for DNS and header analysis; nothing runs locally.</p></noscript>
     <section class="hero" id="home">
       <h1>Check every DNS record<br><em>that protects your mail.</em></h1>
@@ -234,15 +234,17 @@
             <input id="builder-domain" placeholder="example.com">
           </div>
           <div class="field full">
-            <label>Authorised email services</label>
-            <div class="provider-grid" id="provider-options">
-              <label class="provider-option"><input type="checkbox" value="include:spf.protection.outlook.com"> Microsoft 365</label>
-              <label class="provider-option"><input type="checkbox" value="include:_spf.google.com"> Google Workspace</label>
-              <label class="provider-option"><input type="checkbox" value="include:sendgrid.net"> SendGrid</label>
-              <label class="provider-option"><input type="checkbox" value="include:mailgun.org"> Mailgun</label>
-              <label class="provider-option"><input type="checkbox" value="include:amazonses.com"> Amazon SES</label>
-              <label class="provider-option"><input type="checkbox" value="include:servers.mcsv.net"> Mailchimp</label>
-            </div>
+            <fieldset class="provider-fieldset">
+              <legend>Authorised email services</legend>
+              <div class="provider-grid" id="provider-options">
+                <label class="provider-option"><input type="checkbox" value="include:spf.protection.outlook.com"> Microsoft 365</label>
+                <label class="provider-option"><input type="checkbox" value="include:_spf.google.com"> Google Workspace</label>
+                <label class="provider-option"><input type="checkbox" value="include:sendgrid.net"> SendGrid</label>
+                <label class="provider-option"><input type="checkbox" value="include:mailgun.org"> Mailgun</label>
+                <label class="provider-option"><input type="checkbox" value="include:amazonses.com"> Amazon SES</label>
+                <label class="provider-option"><input type="checkbox" value="include:servers.mcsv.net"> Mailchimp</label>
+              </div>
+            </fieldset>
           </div>
           <div class="field full">
             <label for="spf-custom">Additional mechanisms</label>
@@ -360,6 +362,11 @@
         </div>
       </div>
 
+      <div class="loading-panel hidden" id="header-loading" role="status" aria-live="polite">
+        <span class="spinner"></span>
+        <p>Interpreting receiver results and delivery hops…</p>
+      </div>
+
       <div id="header-results" aria-live="polite"></div>
     </section>
 
@@ -379,9 +386,9 @@
         <p class="developer-note">Open for testing. Limited requests.</p>
       </div>
       <div class="developer-links">
-        <a href="./openapi.yaml" type="application/yaml"><strong>REST API</strong><span>OpenAPI contract and examples</span></a>
+        <a href="./openapi.yaml"><strong>REST API</strong><span>OpenAPI contract and examples</span></a>
         <div class="developer-endpoint"><strong>MCP endpoint · 9 tools</strong><code>email.illek.ie/mcp/v2</code></div>
-        <a href="./mcp-copilot.yaml" type="application/yaml"><strong>Copilot connector</strong><span>Import-ready MCP definition</span></a>
+        <a href="./mcp-copilot.yaml"><strong>Copilot connector</strong><span>Import-ready MCP definition</span></a>
       </div>
     </section>
   </main>
@@ -395,7 +402,7 @@
     </a>
     <p>Independent email security diagnostics. Results are guidance, not proof of deliverability.</p>
     <p>© 2026 Illek. All rights reserved. <a href="https://tools.illek.ie/privacy">Privacy</a></p>
-    <a class="text-button" href="./openapi.yaml" type="application/yaml">Developer API</a>
+    <a class="text-button" href="./openapi.yaml">Developer API</a>
     <button class="text-button" id="footer-method-button" type="button">How measurements work</button>
   </footer>
 

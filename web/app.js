@@ -12,6 +12,25 @@
   let importedSpf = null;
   let lastSpfSafetyKey = null;
 
+  // Async answers must never resurrect state the user discarded (Clear,
+  // New check, editing the input) or double-render after a re-trigger. Each
+  // flow captures the generation before its first await and bails when a
+  // user action advanced it meanwhile.
+  function createGeneration() {
+    let value = 0;
+    return {
+      next: () => ++value,
+      current: () => value
+    };
+  }
+
+  // Server-derived status strings land in class attributes; only the closed
+  // set below may style a sink there, so an unexpected value can never
+  // smuggle attacker-chosen tokens into the document.
+  function safeStatusClass(status) {
+    return ["pass", "warn", "fail", "info"].includes(status) ? status : "info";
+  }
+
   // ─── Tab Navigation ──────────────────────────────────────────────
   function selectTool(name, pushHash = true, focusPanel = true) {
     $$(".tool-tab").forEach((x) => {
@@ -211,10 +230,18 @@
   const domainMetrics = $("#domain-metrics");
   const domainResults = $("#domain-results");
 
+  const domainGeneration = createGeneration();
+  let domainCheckInFlight = false;
+
   checkForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const domain = domainInput.value.trim();
-    if (!domain) return;
+    if (!domain || domainCheckInFlight) return;
+    // Trigger paths (batch-row buttons) call requestSubmit(), which runs this
+    // handler even with the submit button disabled; the flag keeps those
+    // activations serial.
+    domainCheckInFlight = true;
+    const generation = domainGeneration.current();
     domainLoading.classList.remove("hidden");
     domainError.classList.add("hidden");
     domainReport.classList.add("hidden");
@@ -226,17 +253,22 @@
         body: JSON.stringify({ domain }),
       });
       const d = await parseApiResponse(r, "domain check");
+      if (generation !== domainGeneration.current()) return;
       if (d.error) showDomainError(d.error);
       else showDomainResults(d);
     } catch (err) {
-      showDomainError(err.message || "Failed to analyze domain");
+      if (generation === domainGeneration.current()) {
+        showDomainError(err.message || "Failed to analyze domain");
+      }
     } finally {
+      domainCheckInFlight = false;
       domainLoading.classList.add("hidden");
       checkButton.disabled = false;
     }
   });
 
   $("#new-check")?.addEventListener("click", () => {
+    domainGeneration.next();
     domainReport.classList.add("hidden");
     domainInput.focus();
   });
@@ -335,7 +367,7 @@
   function createResultSection(icon, title, d) {
     const checks = (d.checks || [])
       .map(
-        (x) => `<div class="check-item ${x.status}">
+        (x) => `<div class="check-item ${safeStatusClass(x.status)}">
           <div class="check-dot"></div>
           <div class="check-content">
             <div class="check-title">${esc(x.title)}</div>
@@ -361,7 +393,7 @@
       <summary>
         <span class="cs-icon">${icon}</span>
         <span class="cs-title">${title}</span>
-        <span class="cs-count ${d.status}">${d.status}</span>
+        <span class="cs-count ${safeStatusClass(d.status)}">${esc(d.status)}</span>
       </summary>
       <div class="cs-body">
         ${record}${selectors}${checks}
@@ -401,7 +433,7 @@
   function createPTRSection(d) {
     const checks = (d.checks || [])
       .map(
-        (x) => `<div class="check-item ${x.status}">
+        (x) => `<div class="check-item ${safeStatusClass(x.status)}">
           <div class="check-dot"></div>
           <div class="check-content">
             <div class="check-title">${esc(x.title)}</div>
@@ -415,7 +447,7 @@
       <summary>
         <span class="cs-icon">PTR</span>
         <span class="cs-title">Reverse DNS (PTR)</span>
-        <span class="cs-count ${d.status}">${d.status}</span>
+        <span class="cs-count ${safeStatusClass(d.status)}">${esc(d.status)}</span>
       </summary>
       <div class="cs-body">${checks}</div>
     </details>`;
@@ -430,10 +462,15 @@
   const spfErrorMsg = $("#spf-error-msg");
   const spfReport = $("#spf-report");
 
+  let spfInspectInFlight = false;
+
   spfForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const domain = spfInput.value.trim();
-    if (!domain) return;
+    if (!domain || spfInspectInFlight) return;
+    // requestSubmit() from "Inspect SPF" runs this handler even while the
+    // submit button is disabled; the flag stops duplicate racing requests.
+    spfInspectInFlight = true;
     spfLoading.classList.remove("hidden");
     spfError.classList.add("hidden");
     spfReport.classList.add("hidden");
@@ -450,6 +487,7 @@
     } catch (err) {
       showSpfError(err.message || "Failed to inspect SPF");
     } finally {
+      spfInspectInFlight = false;
       spfLoading.classList.add("hidden");
       spfButton.disabled = false;
     }
@@ -497,10 +535,10 @@
         <summary>
           <span class="cs-icon">SPF</span>
           <span class="cs-title">Inspection findings</span>
-          <span class="cs-count ${esc(spf.status)}">${esc(spf.status)}</span>
+          <span class="cs-count ${safeStatusClass(spf.status)}">${esc(spf.status)}</span>
         </summary>
         <div class="cs-body">
-          ${spf.checks.map((x) => `<div class="check-item ${esc(x.status)}">
+          ${spf.checks.map((x) => `<div class="check-item ${safeStatusClass(x.status)}">
             <div class="check-dot"></div>
             <div class="check-content">
               <div class="check-title">${esc(x.title)}</div>
@@ -905,16 +943,27 @@
   // ─── Header Analyzer ─────────────────────────────────────────────
   const headerInput = $("#header-input");
   const headerResults = $("#header-results");
+  const headerLoading = $("#header-loading");
   const analyzeHeadersBtn = $("#analyze-headers-btn");
   const enrichHeadersBtn = $("#enrich-headers-btn");
   const clearHeadersBtn = $("#clear-headers-btn");
   const headerError = $("#header-error");
   const headerErrorMsg = $("#header-error-msg");
 
-  headerInput?.addEventListener("input", () => {
-    headerResults.innerHTML = "";
+  // Editing the textarea invalidates both the stored analysis and any
+  // in-flight answer; a response that lands after this must not render.
+  const headerGeneration = createGeneration();
+
+  function resetHeaderState() {
+    headerGeneration.next();
     lastHeaderAnalysis = null;
     enrichHeadersBtn.disabled = true;
+  }
+
+  headerInput?.addEventListener("input", () => {
+    resetHeaderState();
+    headerResults.innerHTML = "";
+    headerError.classList.add("hidden");
   });
 
   analyzeHeadersBtn?.addEventListener("click", runHeaderAnalysis);
@@ -925,10 +974,10 @@
       showHeaderError("Paste the complete message headers first.");
       return;
     }
+    const generation = headerGeneration.current();
     analyzeHeadersBtn.disabled = true;
     analyzeHeadersBtn.textContent = "Analyzing…";
-    headerResults.innerHTML =
-      '<div class="loading-panel" style="padding:32px"><span class="spinner"></span><p>Interpreting receiver results and delivery hops…</p></div>';
+    headerLoading.classList.remove("hidden");
     try {
       const r = await fetch(`${API_BASE}/api/header/analyze`, {
         method: "POST",
@@ -937,43 +986,52 @@
       });
       const d = await parseApiResponse(r, "header analysis");
       if (!r.ok || d.error) throw new Error(d.error || "Header analysis failed");
+      if (generation !== headerGeneration.current()) return;
       lastHeaderAnalysis = d;
       showHeaderAnalysis(d);
       enrichHeadersBtn.disabled = !d.ips.length;
     } catch (err) {
-      showHeaderError(err.message || "Header analysis failed");
+      if (generation === headerGeneration.current()) {
+        showHeaderError(err.message || "Header analysis failed");
+      }
     } finally {
       analyzeHeadersBtn.disabled = false;
       analyzeHeadersBtn.textContent = "Analyze Headers";
+      headerLoading.classList.add("hidden");
     }
   }
 
   clearHeadersBtn?.addEventListener("click", () => {
+    resetHeaderState();
     headerInput.value = "";
     headerResults.innerHTML = "";
-    lastHeaderAnalysis = null;
-    enrichHeadersBtn.disabled = true;
+    headerError.classList.add("hidden");
   });
 
   enrichHeadersBtn?.addEventListener("click", async () => {
     if (!lastHeaderAnalysis || !lastHeaderAnalysis.ips.length) return;
+    const generation = headerGeneration.current();
+    const analysis = lastHeaderAnalysis;
     enrichHeadersBtn.disabled = true;
     enrichHeadersBtn.textContent = "Enriching…";
     try {
       const r = await fetch(`${API_BASE}/api/header/enrich`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ips: lastHeaderAnalysis.ips }),
+        body: JSON.stringify({ ips: analysis.ips }),
       });
       const d = await parseApiResponse(r, "hop enrichment");
       if (!r.ok || d.error) throw new Error(d.error || "PTR lookup failed");
-      lastHeaderAnalysis.enrichment = d.enriched || [];
-      showHeaderAnalysis(lastHeaderAnalysis);
+      if (generation !== headerGeneration.current() || lastHeaderAnalysis !== analysis) return;
+      analysis.enrichment = d.enriched || [];
+      showHeaderAnalysis(analysis);
     } catch (err) {
-      showHeaderError(err.message || "Hop enrichment failed");
+      if (generation === headerGeneration.current()) {
+        showHeaderError(err.message || "Hop enrichment failed");
+      }
     } finally {
       enrichHeadersBtn.textContent = "Enrich Hops";
-      enrichHeadersBtn.disabled = false;
+      enrichHeadersBtn.disabled = !(lastHeaderAnalysis?.ips.length);
     }
   });
 
@@ -1005,10 +1063,10 @@
       <summary>
         <span class="cs-icon">HDR</span>
         <span class="cs-title">Header Findings</span>
-        <span class="cs-count ${esc(summary.status)}">${esc(summary.status)}</span>
+        <span class="cs-count ${safeStatusClass(summary.status)}">${esc(summary.status)}</span>
       </summary>
       <div class="cs-body">
-        ${d.checks.map((x) => `<div class="check-item ${x.status}">
+        ${d.checks.map((x) => `<div class="check-item ${safeStatusClass(x.status)}">
           <div class="check-dot"></div>
           <div class="check-content">
             <div class="check-title">${esc(x.title)}</div>
@@ -1115,7 +1173,11 @@
     batchCount.classList.toggle("over-limit", over);
   }
 
+  const batchGeneration = createGeneration();
+
   $("#batch-clear-btn")?.addEventListener("click", () => {
+    // A response landing after this click belongs to a discarded batch.
+    batchGeneration.next();
     batchInput.value = "";
     batchReport.classList.add("hidden");
     batchError.classList.add("hidden");
@@ -1136,6 +1198,7 @@
       return;
     }
 
+    const generation = batchGeneration.current();
     batchLoading.classList.remove("hidden");
     batchError.classList.add("hidden");
     batchReport.classList.add("hidden");
@@ -1148,6 +1211,7 @@
         body: JSON.stringify({ domains })
       });
       const d = await parseApiResponse(r, "batch check");
+      if (generation !== batchGeneration.current()) return;
       if (d.error) {
         batchErrorMsg.textContent = d.error;
         batchError.classList.remove("hidden");
@@ -1160,8 +1224,10 @@
         revealResults(batchReport);
       }
     } catch (err) {
-      batchErrorMsg.textContent = err.message || "Failed to run batch check";
-      batchError.classList.remove("hidden");
+      if (generation === batchGeneration.current()) {
+        batchErrorMsg.textContent = err.message || "Failed to run batch check";
+        batchError.classList.remove("hidden");
+      }
     } finally {
       batchLoading.classList.add("hidden");
       batchButton.disabled = false;
@@ -1318,7 +1384,7 @@
     if (!cat || !cat.status) return '<span class="batch-status info">Unavailable</span>';
     const status = cat.status;
     const text = status === "pass" ? "Pass" : status === "warn" ? "Warn" : status === "fail" ? "Fail" : status === "info" ? "Info" : status;
-    return `<span class="batch-status ${status}">${text}</span>`;
+    return `<span class="batch-status ${safeStatusClass(status)}">${text}</span>`;
   }
 
   // Check for batch report in URL hash (#batch-<id>)
