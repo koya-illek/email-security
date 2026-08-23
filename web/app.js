@@ -418,15 +418,6 @@
     }
   }
 
-  function statusClass(status) {
-    // Inconclusive lookups (info) are uncertainty, not failure; only an
-    // actual negative result earns the critical colour.
-    return status === "pass" ? "good"
-      : status === "warn" ? "warn"
-      : status === "info" ? "info"
-      : "poor";
-  }
-
   function scoreClassFor(score) {
     return score >= 70 ? "good" : score >= 50 ? "warn" : "poor";
   }
@@ -446,18 +437,7 @@
   }
 
   function createResultSection(icon, title, d) {
-    const checks = (d?.checks || [])
-      .map(
-        (x) => `<div class="check-item ${safeStatusClass(x.status)}">
-          <div class="check-dot"></div>
-          <div class="check-content">
-            <div class="check-title">${esc(x.title)}</div>
-            <div class="check-detail">${esc(x.detail)}</div>
-            ${x.recommendation ? `<div class="check-recommendation"><strong>Recommendation</strong>${esc(x.recommendation)}</div>` : ""}
-          </div>
-        </div>`
-      )
-      .join("");
+    const checks = (d?.checks || []).map(checkItem).join("");
 
     const record = d?.record
       ? `<div class="record-box"><strong>DNS Record</strong>${esc(d.record)}</div>`
