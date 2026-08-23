@@ -43,6 +43,11 @@ paths:
                   version: { type: string }
                   source_revision: { type: string }
                   liveness: { type: boolean }
+    head:
+      operationId: probeEmailSecurityHealth
+      summary: Probe liveness without a response body
+      responses:
+        '200': { description: Service is responding }
   /api:
     get:
       operationId: getEmailSecurityDirectory
@@ -190,6 +195,7 @@ paths:
           content: { application/json: { schema: { type: object, additionalProperties: true } } }
         '404': { description: Report not found or expired }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { description: Report storage or usage accounting is temporarily unavailable; the report is not known to be gone }
   /api/reports/{reportId}/export:
     get:
       operationId: exportEmailSecurityReport
@@ -205,6 +211,7 @@ paths:
           content: { application/json: { schema: { type: object, additionalProperties: true } } }
         '404': { description: Report not found or expired }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { description: Report storage or usage accounting is temporarily unavailable; the report is not known to be gone }
   /mcp/v2:
     post:
       operationId: invokeEmailSecurityMcp

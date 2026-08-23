@@ -1,0 +1,94 @@
+// Shareable report storage: opaque bearer ids, 14-day retention, and a
+// retrieval contract that keeps "absent" distinct from "storage failed".
+const REPORT_RETENTION_DAYS = 14;
+const REPORT_ID_RE = /^[A-Za-z0-9_-]{16}$/;
+
+class ReportStorageError extends Error {
+  constructor(message = 'The report could not be read from storage.') {
+    super(message);
+    this.name = 'ReportStorageError';
+    this.status = 503;
+  }
+}
+
+// Generate a 16-character unguessable report ID using crypto.randomUUID
+function generateReportId() {
+  const raw = crypto.randomUUID().replace(/-/g, '');
+  return raw.slice(0, 16);
+}
+
+function reportExpiry() {
+  const d = new Date();
+  d.setDate(d.getDate() + REPORT_RETENTION_DAYS);
+  return d.toISOString();
+}
+
+function reportShareMetadata(id, expiresAt = null, available = Boolean(id)) {
+  return {
+    available,
+    id: id || null,
+    retentionDays: REPORT_RETENTION_DAYS,
+    expiresAt,
+    bearer: true,
+    cacheControl: 'private, no-store'
+  };
+}
+
+async function storeReport(env, report) {
+  if (!env.DB) return null;
+  const id = generateReportId();
+  const now = new Date().toISOString();
+  const expires = reportExpiry();
+  const storedReport = {
+    ...report,
+    id,
+    share: reportShareMetadata(id, expires, true)
+  };
+  try {
+    await env.DB.prepare(
+      'INSERT INTO reports (id, type, domain, report_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(
+      id,
+      report._reportType || 'domain',
+      report.domain || null,
+      JSON.stringify(storedReport),
+      now,
+      expires
+    ).run();
+    return id;
+  } catch {
+    // Sharing degrades to unavailable; the analysis result itself is unaffected.
+    return null;
+  }
+}
+
+async function loadReport(env, id) {
+  if (!env?.DB || typeof env.DB.prepare !== 'function' || !REPORT_ID_RE.test(id)) return null;
+  let row;
+  try {
+    row = await env.DB.prepare(
+      'SELECT report_json FROM reports WHERE id = ? AND expires_at > ?'
+    ).bind(id, new Date().toISOString()).first();
+  } catch {
+    throw new ReportStorageError();
+  }
+  if (!row) return null;
+  try {
+    const report = JSON.parse(row.report_json);
+    if (!report.id) report.id = id;
+    return report;
+  } catch {
+    throw new ReportStorageError('The stored report is unreadable.');
+  }
+}
+
+module.exports = {
+  REPORT_ID_RE,
+  REPORT_RETENTION_DAYS,
+  ReportStorageError,
+  generateReportId,
+  loadReport,
+  reportExpiry,
+  reportShareMetadata,
+  storeReport
+};

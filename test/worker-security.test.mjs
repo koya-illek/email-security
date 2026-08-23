@@ -114,6 +114,6 @@ test("POST rate limiting classifies expensive paths, preserves CORS, and bypasse
   assert.match(worker, /await limiter\.limit\(\{ key: client \}\)/);
   assert.match(worker, /429,\s*\{ \.\.\.corsHeaders, 'Retry-After': String\(retryAfter\) \}/);
   assert.match(worker, /if \(request\.method === 'OPTIONS'\)/);
-  assert.match(worker, /url\.pathname === '\/api\/health' && request\.method === 'GET'/);
+  assert.match(worker, /url\.pathname === '\/api\/health' && \(request\.method === 'GET' \|\| request\.method === 'HEAD'\)/);
   assert.match(worker, /CF-Connecting-IP.*anonymous/);
 });

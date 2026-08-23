@@ -6,6 +6,15 @@ const ipaddr = require('ipaddr.js');
 const { analyzeEmailHeaders } = require('./header-analyzer');
 const { redirectForRequest } = require('./redirects');
 const { runScheduledCleanup } = require('./retention');
+const {
+  REPORT_ID_RE,
+  REPORT_RETENTION_DAYS,
+  generateReportId,
+  loadReport,
+  reportExpiry,
+  reportShareMetadata,
+  storeReport
+} = require('./report-store');
 const { handleMcp } = require('./mcp');
 
 const DOH_PROVIDERS = [
@@ -29,8 +38,6 @@ const RATE_LIMIT_RETRY_AFTER_SECONDS = 60;
 const DAILY_RATE_LIMIT_RETRY_AFTER_SECONDS = 86400;
 const STANDARD_RATE_LIMITER_BINDING = 'STANDARD_RATE_LIMITER';
 const EXPENSIVE_RATE_LIMITER_BINDING = 'EXPENSIVE_RATE_LIMITER';
-const REPORT_RETENTION_DAYS = 14;
-const REPORT_ID_RE = /^[A-Za-z0-9_-]{16}$/;
 // Batch rows share one platform subrequest cap, so each domain only receives
 // an even slice of the 45-subrequest budget. Live verification showed four
 // well-configured domains exhausted the whole budget and later rows scored
@@ -66,59 +73,6 @@ const API_SECURITY_HEADERS = {
 // each serving location; these are not strict global quotas.
 
 // Common DKIM selectors to check
-// Generate a 16-character unguessable report ID using crypto.randomUUID
-function generateReportId() {
-  const raw = crypto.randomUUID().replace(/-/g, '');
-  return raw.slice(0, 16);
-}
-
-function reportExpiry() {
-  const d = new Date();
-  d.setDate(d.getDate() + REPORT_RETENTION_DAYS);
-  return d.toISOString();
-}
-
-async function storeReport(env, report) {
-  if (!env.DB) return null;
-  const id = generateReportId();
-  const now = new Date().toISOString();
-  const expires = reportExpiry();
-  const storedReport = {
-    ...report,
-    id,
-    share: reportShareMetadata(id, expires, true)
-  };
-  try {
-    await env.DB.prepare(
-      'INSERT INTO reports (id, type, domain, report_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(
-      id,
-      report._reportType || 'domain',
-      report.domain || null,
-      JSON.stringify(storedReport),
-      now,
-      expires
-    ).run();
-    return id;
-  } catch {
-    return null;
-  }
-}
-
-async function loadReport(env, id) {
-  if (!env.DB || !REPORT_ID_RE.test(id)) return null;
-  try {
-    const row = await env.DB.prepare(
-      'SELECT report_json FROM reports WHERE id = ? AND expires_at > ?'
-    ).bind(id, new Date().toISOString()).first();
-    if (!row) return null;
-    const report = JSON.parse(row.report_json);
-    if (!report.id) report.id = id;
-    return report;
-  } catch {
-    return null;
-  }
-}
 
 function createRequestBudget(limit = REQUEST_SUBREQUEST_LIMIT) {
   return {
@@ -136,17 +90,6 @@ function createRequestBudget(limit = REQUEST_SUBREQUEST_LIMIT) {
     snapshot() {
       return { limit: this.limit, used: this.used, remaining: Math.max(0, this.limit - this.used), exhausted: this.exhausted };
     }
-  };
-}
-
-function reportShareMetadata(id, expiresAt = null, available = Boolean(id)) {
-  return {
-    available,
-    id: id || null,
-    retentionDays: REPORT_RETENTION_DAYS,
-    expiresAt,
-    bearer: true,
-    cacheControl: 'private, no-store'
   };
 }
 
@@ -374,7 +317,9 @@ async function handleRequest(request, env) {
     return new Response(null, { headers: { ...securityHeaders, ...corsHeaders, 'Access-Control-Max-Age': '600' } });
   }
 
-  if (url.pathname === '/api/health' && request.method === 'GET') {
+  // HEAD shares the GET response; the runtime strips the body, so uptime
+  // probes that default to HEAD see a healthy service instead of a 404.
+  if (url.pathname === '/api/health' && (request.method === 'GET' || request.method === 'HEAD')) {
     return jsonResponse({ ok: true, service: 'email-security-checker', version: '2.0.0', source_revision: env.SOURCE_REVISION || 'unknown', liveness: true }, 200, securityHeaders);
   }
 
@@ -602,7 +547,9 @@ async function handleRequest(request, env) {
       const success = await consumeDailyRateLimit(request, env, 'report', Number(env.REPORT_DAILY_LIMIT) || 120);
       if (!success) return jsonResponse({ error: 'Daily report retrieval limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(DAILY_RATE_LIMIT_RETRY_AFTER_SECONDS) });
     } catch {
-      return jsonResponse({ error: 'Rate limiting is unavailable.' }, 503, corsHeaders);
+      // Daily accounting is a quota guard, not the service itself; say what
+      // actually happened instead of blaming rate limiting.
+      return jsonResponse({ error: 'Report retrieval is temporarily unavailable. Try again shortly.' }, 503, corsHeaders);
     }
   }
 
@@ -613,7 +560,14 @@ async function handleRequest(request, env) {
     if (!REPORT_ID_RE.test(reportId)) {
       return jsonResponse({ error: 'Report not found' }, 404, corsHeaders);
     }
-    const stored = await loadReport(env, reportId);
+    let stored;
+    try {
+      stored = await loadReport(env, reportId);
+    } catch (err) {
+      // A storage failure is not evidence that the report is gone; answering
+      // 404 here would tell every share-link visitor their report expired.
+      return requestErrorResponse(err, corsHeaders, 503);
+    }
     if (!stored) {
       return jsonResponse({ error: 'Report not found or expired' }, 404, corsHeaders);
     }

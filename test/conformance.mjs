@@ -49,6 +49,7 @@ async function postResponse(path, body, headers = {}) {
 try {
   await waitForWorker();
   assert.equal((await fetch(base, { method: 'HEAD' })).status, 200, 'HEAD serves the app shell');
+  assert.equal((await fetch(base + '/api/health', { method: 'HEAD' })).status, 200, 'HEAD probes the health endpoint');
   const evaluationCases = [
     ['IPv4 pass', 'v=spf1 ip4:192.0.2.0/24 -all', '192.0.2.44', 'pass'],
     ['IPv4 fail', 'v=spf1 ip4:192.0.2.0/24 -all', '198.51.100.7', 'fail'],

@@ -142,7 +142,7 @@ One Cloudflare Worker serves the frontend and API on `email.illek.ie` and the co
 
 ## Failure model
 
-An individual provider or record failure becomes unknown or unavailable evidence. Batch results preserve per-domain validation and errors. Budget exhaustion returns an incomplete result with explicit budget metadata. D1 failure makes sharing unavailable while leaving the analysis result visible where possible.
+An individual provider or record failure becomes unknown or unavailable evidence. Batch results preserve per-domain validation and errors. Budget exhaustion returns an incomplete result with explicit budget metadata. D1 failure makes sharing unavailable while leaving the analysis result visible where possible. Report retrieval distinguishes absence from trouble: an absent or expired id answers 404, while a storage failure answers 503 rather than pretending the report is gone.
 
 ## Non-goals
 
