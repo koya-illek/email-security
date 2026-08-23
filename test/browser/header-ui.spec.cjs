@@ -124,6 +124,22 @@ test('has no automated accessibility violations on the main checker', async ({ p
   expect(results.violations).toEqual([]);
 });
 
+test('has no automated accessibility violations on the tool panels', async ({ page }) => {
+  // Each panel is a top-level section under the page h1; its title must not
+  // skip heading levels (h1 -> h3 was an axe violation on every non-default
+  // tab, invisible while axe only scanned the landing view).
+  await page.goto('/?panel=audit-builder#builder');
+  let results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+
+  await page.goto('/?panel=audit-headers#headers');
+  await page.getByLabel('Complete message headers').fill(goodHeaders);
+  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+  await expect(page.locator('.trust-banner')).toBeVisible();
+  results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+});
+
 test('fresh share-link navigation renders domain and batch reports after DOM boot', async ({ page }) => {
   const report = domainReport('v=spf1 -all');
   report.id = '1234567890abcdef';

@@ -355,7 +355,7 @@ h1 em { color: var(--accent); font-style: normal; font-weight: 500; }
   border: 1px solid var(--line-bright);
   border-radius: 3px;
 }
-.section-heading h3 { margin: 0; font-size: 18px; }
+.section-heading h2 { margin: 0; font-size: 18px; }
 .section-heading p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
 
 /* Evidence badge */
