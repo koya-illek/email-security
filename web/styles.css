@@ -810,6 +810,7 @@ textarea:focus-visible {
 .trust-banner.pass { border-color: rgba(173, 155, 255, .35); }
 .trust-banner.warn { border-color: rgba(255, 198, 92, .35); }
 .trust-banner.fail { border-color: rgba(255, 111, 125, .4); }
+.trust-banner.info { border-color: rgba(126, 188, 255, .35); }
 .trust-banner strong { display: block; margin-bottom: 3px; }
 .trust-banner span { color: var(--muted); font-size: 13px; line-height: 1.55; }
 

@@ -233,6 +233,10 @@
   const domainGeneration = createGeneration();
   let domainCheckInFlight = false;
 
+  // Editing the field orphans the in-flight answer: when the response lands,
+  // the generation mismatch stops it from rendering under a different domain.
+  domainInput?.addEventListener("input", () => domainGeneration.next());
+
   checkForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const domain = domainInput.value.trim();
@@ -401,15 +405,35 @@
     </details>`;
   }
 
+  function mxCheckItems(d) {
+    return (d.checks || [])
+      .map(
+        (x) => `<div class="check-item ${safeStatusClass(x.status)}">
+          <div class="check-dot"></div>
+          <div class="check-content">
+            <div class="check-title">${esc(x.title)}</div>
+            <div class="check-detail">${esc(x.detail)}</div>
+            ${x.recommendation ? `<div class="check-recommendation"><strong>Recommendation</strong>${esc(x.recommendation)}</div>` : ""}
+          </div>
+        </div>`
+      )
+      .join("");
+  }
+
   function createMXSection(d) {
+    // The chip must reflect the analyzed status: the mixed Null-MX failure
+    // arrives with records present, so "N found" alone would style a failing
+    // lookup as healthy.
+    const chip = `<span class="cs-count ${safeStatusClass(d.status)}">${esc(d.status || (d.records?.length ? "pass" : "info"))}</span>`;
     if (!d.records || !d.records.length) {
+      const body = mxCheckItems(d) || '<p class="muted" style="padding:16px 0">No MX records found.</p>';
       return `<details class="collapsible-section">
         <summary>
           <span class="cs-icon">MX</span>
           <span class="cs-title">MX Records</span>
-          <span class="cs-count warn">none</span>
+          ${chip}
         </summary>
-        <div class="cs-body"><p class="muted" style="padding:16px 0">No MX records found.</p></div>
+        <div class="cs-body">${body}</div>
       </details>`;
     }
     const rows = d.records
@@ -422,10 +446,11 @@
       <summary>
         <span class="cs-icon">MX</span>
         <span class="cs-title">MX Records</span>
-        <span class="cs-count pass">${d.records.length} found</span>
+        ${chip}
       </summary>
       <div class="cs-body">
         <table class="mx-table"><thead><tr><th>Priority</th><th>Mail Server</th></tr></thead><tbody>${rows}</tbody></table>
+        ${mxCheckItems(d)}
       </div>
     </details>`;
   }
@@ -462,7 +487,10 @@
   const spfErrorMsg = $("#spf-error-msg");
   const spfReport = $("#spf-report");
 
+  const spfInspectGeneration = createGeneration();
   let spfInspectInFlight = false;
+
+  spfInput?.addEventListener("input", () => spfInspectGeneration.next());
 
   spfForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -471,6 +499,7 @@
     // requestSubmit() from "Inspect SPF" runs this handler even while the
     // submit button is disabled; the flag stops duplicate racing requests.
     spfInspectInFlight = true;
+    const generation = spfInspectGeneration.current();
     spfLoading.classList.remove("hidden");
     spfError.classList.add("hidden");
     spfReport.classList.add("hidden");
@@ -482,10 +511,13 @@
         body: JSON.stringify({ domain }),
       });
       const d = await parseApiResponse(r, "SPF inspection");
+      if (generation !== spfInspectGeneration.current()) return;
       if (d.error) showSpfError(d.error);
       else showSpfInspector(d);
     } catch (err) {
-      showSpfError(err.message || "Failed to inspect SPF");
+      if (generation === spfInspectGeneration.current()) {
+        showSpfError(err.message || "Failed to inspect SPF");
+      }
     } finally {
       spfInspectInFlight = false;
       spfLoading.classList.add("hidden");
@@ -1047,7 +1079,7 @@
     }
 
     const summary = d.summary;
-    let html = `<div class="trust-banner ${esc(summary.status)}">
+    let html = `<div class="trust-banner ${safeStatusClass(summary.status)}">
       <strong>${esc(summary.verdict)}</strong>
       <span>${esc(summary.confidence)}${summary.authservId ? " · Receiver ID: " + esc(summary.authservId) : ""}. Authentication outcomes are reported by the pasted headers, not independently re-run.</span>
     </div>`;
@@ -1160,7 +1192,12 @@
   let batchSortCol = null;
   let batchSortDir = 1;
 
+  const batchGeneration = createGeneration();
+
   batchInput?.addEventListener("input", () => {
+    // Like the single-domain input, editing orphans any in-flight batch so a
+    // response for discarded lines cannot render afterwards.
+    batchGeneration.next();
     const lines = batchInput.value.split("\n").map(l => l.trim()).filter(Boolean);
     updateBatchCount(lines.length);
   });
@@ -1172,8 +1209,6 @@
       (over ? ` — ${extra} extra line${extra === 1 ? "" : "s"} rejected` : "");
     batchCount.classList.toggle("over-limit", over);
   }
-
-  const batchGeneration = createGeneration();
 
   $("#batch-clear-btn")?.addEventListener("click", () => {
     // A response landing after this click belongs to a discarded batch.
@@ -1384,7 +1419,9 @@
     if (!cat || !cat.status) return '<span class="batch-status info">Unavailable</span>';
     const status = cat.status;
     const text = status === "pass" ? "Pass" : status === "warn" ? "Warn" : status === "fail" ? "Fail" : status === "info" ? "Info" : status;
-    return `<span class="batch-status ${safeStatusClass(status)}">${text}</span>`;
+    // Stored reports replay through this sink, so the text is escaped like
+    // every other server-derived string.
+    return `<span class="batch-status ${safeStatusClass(status)}">${esc(text)}</span>`;
   }
 
   // Check for batch report in URL hash (#batch-<id>)
