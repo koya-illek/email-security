@@ -204,6 +204,27 @@ test('fresh share-link navigation renders domain and batch reports after DOM boo
   expect(errors).toEqual([]);
 });
 
+test('an oversized header paste is refused locally without spending an upload', async ({ page }) => {
+  // The API caps header bodies at 256 KiB; the client names that limit
+  // immediately instead of uploading a body the server must refuse.
+  let analyzeRequests = 0;
+  await page.route('**/api/header/analyze', route => {
+    analyzeRequests++;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  });
+  await page.goto('/#headers');
+  const oversizedPaste = 'Subject: oversized\n' + ('X-Filler: ' + 'a'.repeat(200) + '\n').repeat(1400);
+  await page.getByLabel('Complete message headers').fill(oversizedPaste);
+  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+
+  await expect(page.locator('#header-error')).toBeVisible();
+  const msg = page.locator('#header-error-msg');
+  await expect(msg).toContainText('256 KiB');
+  await expect(msg).not.toContainText('fetch');
+  await page.waitForTimeout(300);
+  expect(analyzeRequests).toBe(0);
+});
+
 test('a shape-drifted stored report degrades to unavailable evidence instead of crashing', async ({ page }) => {
   // Share links replay any D1 row written within the 14-day retention,
   // regardless of which analysis schema produced it. Missing or drifted

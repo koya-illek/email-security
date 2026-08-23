@@ -2,6 +2,9 @@
   "use strict";
 
   const API_BASE = (window.EMAIL_CHECKER_CONFIG?.API_BASE || "").replace(/\/$/, "");
+  // Mirrors HEADER_JSON_BODY_MAX_BYTES in worker.js so an impossible paste is
+  // refused before spending its upload instead of failing at the server.
+  const HEADER_PASTE_MAX_BYTES = 256 * 1024;
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => [...document.querySelectorAll(sel)];
 
@@ -1060,6 +1063,10 @@
     const raw = headerInput.value.trim();
     if (!raw) {
       showHeaderError("Paste the complete message headers first.");
+      return;
+    }
+    if (new TextEncoder().encode(raw).byteLength > HEADER_PASTE_MAX_BYTES) {
+      showHeaderError(`These headers exceed the ${HEADER_PASTE_MAX_BYTES / 1024} KiB analysis limit. Paste the headers of one complete message, without the body, and retry.`);
       return;
     }
     const generation = headerGeneration.current();
