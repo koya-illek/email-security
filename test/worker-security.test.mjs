@@ -293,3 +293,14 @@ test("the page CSP serves styles from the stylesheet alone, with no inline style
     assert.doesNotMatch(source, / style="/, `${name} must not carry inline style attributes`);
   }
 });
+
+test("malformed report ids are refused before spending daily retrieval quota", () => {
+  // /api/reports/<garbage> can never reach storage, so it must answer 404
+  // without consuming one of the caller's daily retrievals.
+  const retrieval = worker.slice(worker.indexOf("// GET /api/reports/:id"), worker.indexOf("// POST /api/batch"));
+  const validateAt = retrieval.indexOf("REPORT_ID_RE.test(candidate)");
+  const quotaAt = retrieval.indexOf("consumeDailyRateLimit");
+  assert.ok(validateAt !== -1, "report id validation must exist in the retrieval path");
+  assert.ok(quotaAt !== -1, "daily quota accounting must exist in the retrieval path");
+  assert.ok(validateAt < quotaAt, "id validation must precede quota consumption");
+});

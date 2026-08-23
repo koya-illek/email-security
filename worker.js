@@ -581,7 +581,20 @@ async function handleRequest(request, env) {
     }
   }
 
-  if (request.method === 'GET' && url.pathname.startsWith('/api/reports/')) {
+  // GET /api/reports/:id — load a stored report. The id shape is validated
+  // before any quota accounting: a malformed path can never reach storage,
+  // so it must not spend one of the caller's daily retrievals.
+  const reportMatch = url.pathname.match(/^\/api\/reports\/([A-Za-z0-9_-]+)(\/export)?$/);
+  let validReportId = null;
+  if (request.method === 'GET' && reportMatch) {
+    const candidate = reportMatch[1];
+    if (!REPORT_ID_RE.test(candidate)) {
+      return jsonResponse({ error: 'Report not found' }, 404, corsHeaders);
+    }
+    validReportId = candidate;
+  }
+
+  if (validReportId) {
     try {
       const success = await consumeDailyRateLimit(request, env, 'report', Number(env.REPORT_DAILY_LIMIT) || 120);
       if (!success) return jsonResponse({ error: 'Daily report retrieval limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(DAILY_RATE_LIMIT_RETRY_AFTER_SECONDS) });
@@ -592,13 +605,8 @@ async function handleRequest(request, env) {
     }
   }
 
-  // GET /api/reports/:id — load a stored report
-  const reportMatch = url.pathname.match(/^\/api\/reports\/([A-Za-z0-9_-]+)(\/export)?$/);
-  if (reportMatch && request.method === 'GET') {
-    const reportId = reportMatch[1];
-    if (!REPORT_ID_RE.test(reportId)) {
-      return jsonResponse({ error: 'Report not found' }, 404, corsHeaders);
-    }
+  if (validReportId) {
+    const reportId = validReportId;
     let stored;
     try {
       stored = await loadReport(env, reportId);
