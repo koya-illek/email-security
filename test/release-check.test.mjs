@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
   assertReleaseRevision,
@@ -18,6 +22,30 @@ test('release revisions must identify a clean git commit', () => {
   for (const revision of ['', 'unknown', 'unpinned', 'f85857f-dirty', 'not-a-hash']) {
     assert.throws(() => assertReleaseRevision(revision));
   }
+});
+
+test('the deploy command refuses source bytes that no commit identifies', (context) => {
+  const repository = mkdtempSync(join(tmpdir(), 'email-release-check-'));
+  context.after(() => rmSync(repository, { recursive: true, force: true }));
+  execFileSync('git', ['init', '--quiet'], { cwd: repository });
+  writeFileSync(join(repository, 'tracked.txt'), 'committed\n');
+  execFileSync('git', ['add', 'tracked.txt'], { cwd: repository });
+  execFileSync('git', [
+    '-c', 'user.name=Release Check',
+    '-c', 'user.email=release-check@example.invalid',
+    'commit', '--quiet', '-m', 'fixture'
+  ], { cwd: repository });
+  writeFileSync(join(repository, 'tracked.txt'), 'dirty\n');
+
+  const deployScript = new URL('../scripts/deploy.mjs', import.meta.url);
+  const result = spawnSync(process.execPath, [deployScript.pathname, '--dry-run'], {
+    cwd: repository,
+    encoding: 'utf8'
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Refusing to deploy a dirty worktree/);
+  assert.doesNotMatch(result.stdout, /wrangler/i, 'the release must stop before Wrangler starts');
 });
 
 test('health verification rejects a stale deployment revision', async () => {

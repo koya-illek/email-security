@@ -47,6 +47,8 @@ npm run deploy
 carry truthful provenance. Extra flags pass through, so `npm run deploy -- --dry-run`
 exercises the same injection without deploying. Deploying with plain
 `wrangler deploy` skips the injection and reports the fallback value `unpinned`.
+The release command refuses a dirty worktree because its bytes would not match
+the injected commit. Use `npm run check` to dry-run uncommitted changes.
 
 After deployment, verify the exact released commit against the canonical host:
 

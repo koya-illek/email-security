@@ -9,17 +9,27 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 
 function resolveRevision() {
+  let revision;
   try {
-    const revision = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
-    const dirty = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0;
-    return dirty ? `${revision}-dirty` : revision;
-  } catch {
-    // Outside git (or git unavailable), an unpinned marker beats a plausible lie.
-    return 'unpinned';
+    revision = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch (error) {
+    throw new Error(`Cannot identify the release commit: ${error.message}`);
   }
+
+  const dirty = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0;
+  if (dirty) {
+    throw new Error('Refusing to deploy a dirty worktree. Commit the release or use npm run check for an uncommitted dry run.');
+  }
+  return revision;
 }
 
-const revision = resolveRevision();
+let revision;
+try {
+  revision = resolveRevision();
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
 const passthrough = process.argv.slice(2);
 console.log(`Deploying source revision ${revision}${passthrough.length ? ` (${passthrough.join(' ')})` : ''}`);
 

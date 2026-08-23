@@ -265,7 +265,8 @@ test("the release flow pins the deployed source revision instead of a stale plac
   assert.match(wrangler, /SOURCE_REVISION = "unpinned"/);
   const deployScript = await readFile(new URL("../scripts/deploy.mjs", import.meta.url), "utf8");
   assert.match(deployScript, /rev-parse/, "revision must come from git");
-  assert.match(deployScript, /status.+--porcelain/s, "dirty worktrees must be marked");
+  assert.match(deployScript, /status.+--porcelain/s, "release cleanliness must come from git");
+  assert.match(deployScript, /Refusing to deploy a dirty worktree/, "dirty worktrees must not be released");
   assert.match(deployScript, /--var/, "wrangler must receive the revision override");
   assert.match(deployScript, /SOURCE_REVISION:\$\{revision\}/);
 });
