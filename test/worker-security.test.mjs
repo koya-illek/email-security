@@ -137,7 +137,7 @@ test("the shell/metadata audit is committed and wired as a runnable command", as
   // The checks earlier rounds cited must live in the repo, not in scratch:
   // canonical metadata, structured data, robots/sitemap consistency, and
   // machine-readable contract validity.
-  for (const topic of ["canonical", "application/ld+json", "robots.txt", "sitemap.xml", "openapi.yaml", "mcp-copilot.yaml"]) {
+  for (const topic of ["canonical", "JSON-LD structured data", "robots.txt", "sitemap.xml", "openapi.yaml", "mcp-copilot.yaml"]) {
     assert.ok(audit.includes(topic), `audit must cover ${topic}`);
   }
 });
