@@ -642,6 +642,8 @@ textarea:focus-visible {
 }
 
 .field-help { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.output-host { margin-bottom: 6px; }
+.cs-body-intro { padding-top: 20px; }
 .muted { color: var(--muted); }
 
 /* Source group (SPF expanded sources) */
@@ -827,6 +829,10 @@ textarea:focus-visible {
 
 /* Hop list */
 .hop-list { display: grid; gap: 10px; margin-top: 12px; }
+.hop-chain-note { padding-top: 16px; }
+.hop-addresses { margin-top: 9px; }
+.hop-raw { margin-top: 9px; }
+.hop-raw-value { margin-top: 6px; word-break: break-word; }
 .hop-item {
   background: var(--bg);
   border: 1px solid var(--line);

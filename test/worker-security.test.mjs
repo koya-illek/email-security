@@ -282,3 +282,14 @@ test("the shell/metadata audit is committed and wired as a runnable command", as
     assert.ok(audit.includes(topic), `audit must cover ${topic}`);
   }
 });
+
+test("the page CSP serves styles from the stylesheet alone, with no inline style sinks", async () => {
+  // Dropping 'unsafe-inline' only holds while no shipped markup or generated
+  // DOM carries a style attribute; this pins both halves of that contract.
+  assert.match(worker, /style-src 'self';/);
+  assert.doesNotMatch(worker, /style-src[^]*?'unsafe-inline'/);
+  const app = await readFile(new URL("../web/app.js", import.meta.url), "utf8");
+  for (const [name, source] of [["index.html", html], ["app.js", app]]) {
+    assert.doesNotMatch(source, / style="/, `${name} must not carry inline style attributes`);
+  }
+});

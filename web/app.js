@@ -686,7 +686,7 @@
   function outputCard(title, host, value, warning) {
     return `<div class="output-card">
       <div class="output-head"><strong>${esc(title)}</strong><button class="copy-btn" disabled>Validating…</button></div>
-      <div class="field-help" style="margin-bottom:6px">Host: ${esc(host)}</div>
+      <div class="field-help output-host">Host: ${esc(host)}</div>
       <div class="dns-value">${esc(value)}</div>
       ${warning ? `<div class="notice">${esc(warning)}</div>` : ""}
       <div class="validation-result"></div>
@@ -1183,7 +1183,7 @@
         <span class="cs-count info">${d.hops.length} hops</span>
       </summary>
       <div class="cs-body">
-        <p class="muted" style="padding-top:16px">Hop 1 is the newest, topmost Received header. Later numbers move toward the earliest recorded sender-side hop.</p>
+        <p class="muted hop-chain-note">Hop 1 is the newest, topmost Received header. Later numbers move toward the earliest recorded sender-side hop.</p>
         <div class="hop-list">
           ${d.hops.length ? d.hops.map((h) => renderHop(h, d.enrichment)).join("") : '<p class="muted">No Received headers found. Use the complete post-delivery message source.</p>'}
         </div>
@@ -1215,11 +1215,11 @@
       .join("");
 
     return `<div class="hop-item">
-      <strong>Hop ${h.index} · ${esc(h.position)}</strong>
+      <strong>Hop ${esc(h.index)} · ${esc(h.position)}</strong>
       ${route}
       <div class="hop-meta">${meta}</div>
-      ${addresses ? `<div style="margin-top:9px">${addresses}</div>` : ""}
-      <details style="margin-top:9px"><summary class="muted">Raw Received header</summary><div class="muted" style="margin-top:6px;word-break:break-word">${esc(h.value)}</div></details>
+      ${addresses ? `<div class="hop-addresses">${addresses}</div>` : ""}
+      <details class="hop-raw"><summary class="muted">Raw Received header</summary><div class="muted hop-raw-value">${esc(h.value)}</div></details>
     </div>`;
   }
 
