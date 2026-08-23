@@ -1093,11 +1093,11 @@ dialog h2 { margin: 0 0 30px; font-size: 32px; letter-spacing: -.04em; }
     background: #fff !important;
     color: #111 !important;
   }
-  .site-header, .tool-nav, footer, .hero-cta, form, .form-grid,
+  .site-header, .tool-nav, footer, form, .form-grid,
   .header-actions, .report-actions, .skip-link, .grid-field,
   .noscript-note, .developer-access, .error-panel, .loading-panel,
   .notice, .privacy-note { display: none !important; }
-  .panel, .collapsible-section, .metric, .score-card,
+  .panel, .collapsible-section, .metric,
   .check-item, .hop-item {
     background: #fff !important;
     color: #111 !important;

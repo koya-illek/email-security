@@ -110,15 +110,42 @@
     }[ch]));
   }
 
-  function copyText(value) {
-    navigator.clipboard.writeText(value).then(() => {}).catch(() => {
-      const t = document.createElement("textarea");
-      t.value = value;
-      document.body.appendChild(t);
-      t.select();
-      document.execCommand("copy");
-      t.remove();
-    });
+  // Resolves true only when a copy path actually reported success; the
+  // execCommand fallback covers non-secure origins where
+  // navigator.clipboard is undefined rather than throwing before it runs.
+  async function copyText(value) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+      throw new Error("Async clipboard unavailable");
+    } catch {
+      try {
+        const t = document.createElement("textarea");
+        t.value = value;
+        t.setAttribute("readonly", "");
+        t.style.position = "fixed";
+        t.style.opacity = "0";
+        document.body.appendChild(t);
+        t.select();
+        const ok = document.execCommand("copy");
+        t.remove();
+        return ok;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  // Feedback reads from the pre-click label stored on the element, so rapid
+  // re-clicks cannot capture the transient "Copied!" as the restore target.
+  function flashCopyState(button, ok) {
+    if (!button) return;
+    if (!button.dataset.label) button.dataset.label = button.textContent;
+    clearTimeout(button._copyTimer);
+    button.textContent = ok ? "Copied!" : "Copy failed";
+    button._copyTimer = setTimeout(() => { button.textContent = button.dataset.label; }, 2000);
   }
 
   // An edge or proxy failure can answer any API call with a non-JSON page;
@@ -149,16 +176,13 @@
   }
 
   // ─── Share + Export buttons ──────────────────────────────────
-  $("#copy-share-link")?.addEventListener("click", () => {
+  $("#copy-share-link")?.addEventListener("click", async () => {
+    const btn = $("#copy-share-link");
     if (lastDomainReport?.id) {
       const url = `${location.origin}/#${lastDomainReport.id}`;
-      copyText(url);
-      const btn = $("#copy-share-link");
-      const orig = btn.textContent;
-      btn.textContent = "Copied!";
-      setTimeout(() => { btn.textContent = orig; }, 2000);
+      flashCopyState(btn, await copyText(url));
     } else {
-      setShareUnavailable($("#domain-share-note"), $("#copy-share-link"));
+      setShareUnavailable($("#domain-share-note"), btn);
     }
   });
 
@@ -620,9 +644,11 @@
     spfReport.classList.remove("hidden");
 
     // Bind buttons
-    $("#spf-detail [data-copy='original']").onclick = () => copyText(f.originalRecord);
+    $("#spf-detail [data-copy='original']").onclick = async (event) =>
+      flashCopyState(event.currentTarget, await copyText(f.originalRecord));
     if (safePreview) {
-      $("#spf-detail [data-copy='flattened']").onclick = () => copyText(f.record);
+      $("#spf-detail [data-copy='flattened']").onclick = async (event) =>
+        flashCopyState(event.currentTarget, await copyText(f.record));
     }
     $("#spf-detail [data-action='use-spf']").onclick = () => {
       // An unsafe flattened preview is evidence for review, not a proposed
@@ -674,7 +700,7 @@
     box.innerHTML = `<div class="notice good"><strong>Valid record</strong>${metrics}${warnings.length ? "<br>" + warnings.map(esc).join("<br>") : ""}</div>`;
     button.textContent = "Copy value";
     button.disabled = false;
-    button.onclick = () => copyText(record);
+    button.onclick = async () => flashCopyState(button, await copyText(record));
   }
 
   function renderSpfBuilder() {
@@ -753,6 +779,9 @@
     // validation quota and two daily-counter writes before the Record Builder
     // is ever opened; the first input resumes the normal debounced flow.
     if (!domain && !terms.length && !importedSpf) {
+      // Also cancel a validation scheduled before this render emptied the
+      // builder; firing it would spend quota on a record that no longer exists.
+      clearTimeout(spfValidationTimer);
       const button = root.querySelector(".copy-btn");
       if (button) {
         button.textContent = "Enter a domain to validate";
@@ -834,7 +863,9 @@
     if (!validBuilderDomain(domain)) extra.push("Enter a valid domain before copying.");
 
     if (!domain && !rua) {
-      // Idle DMARC planner: same quota rationale as the idle SPF builder.
+      // Idle DMARC planner: same quota rationale as the idle SPF builder,
+      // including cancelling anything scheduled before this render.
+      clearTimeout(dmarcValidationTimer);
       const button = root.querySelector(".copy-btn");
       if (button) {
         button.textContent = "Enter a domain to validate";
@@ -1269,14 +1300,11 @@
     }
   });
 
-  $("#batch-copy-link")?.addEventListener("click", () => {
+  $("#batch-copy-link")?.addEventListener("click", async () => {
+    const btn = $("#batch-copy-link");
     if (lastBatchReport?.id) {
       const url = `${location.origin}/#batch-${lastBatchReport.id}`;
-      copyText(url);
-      const btn = $("#batch-copy-link");
-      const orig = btn.textContent;
-      btn.textContent = "Copied!";
-      setTimeout(() => { btn.textContent = orig; }, 2000);
+      flashCopyState(btn, await copyText(url));
     } else {
       updateBatchShareState(lastBatchReport);
     }
