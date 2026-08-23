@@ -72,7 +72,7 @@ test("P0 analysis keeps DNS uncertainty, score confidence, and SPF flatten proof
   assert.match(worker, /include terminal .* proven -all subset/);
   // Analysis-output changes invalidate edge-cached reports; a stale version
   // would keep serving superseded verdicts for up to a day after deploy.
-  assert.match(worker, /const CACHE_VERSION = 'v10-ptr-honesty'/);
+  assert.match(worker, /const CACHE_VERSION = 'v11-dmarc-reporting'/);
 });
 
 test("PTR observations keep transient DNS trouble distinct from authoritative absence", () => {
