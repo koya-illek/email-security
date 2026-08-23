@@ -48,6 +48,17 @@ carry truthful provenance. Extra flags pass through, so `npm run deploy -- --dry
 exercises the same injection without deploying. Deploying with plain
 `wrangler deploy` skips the injection and reports the fallback value `unpinned`.
 
+After deployment, verify the exact released commit against the canonical host:
+
+```bash
+npm run verify:release -- https://email.illek.ie <git-revision>
+```
+
+The verifier checks `/api/health`, runs the HTML and public-contract audit, and
+sends the two DMARC validation requests that cover version case, permitted
+whitespace, and `psd=u`. Those requests consume API rate-limit capacity, so use
+`npm run audit:html` alone for a read-only production review.
+
 ### Custom Domain (Optional)
 
 ```bash
