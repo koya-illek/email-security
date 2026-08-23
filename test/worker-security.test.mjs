@@ -117,3 +117,15 @@ test("POST rate limiting classifies expensive paths, preserves CORS, and bypasse
   assert.match(worker, /url\.pathname === '\/api\/health' && \(request\.method === 'GET' \|\| request\.method === 'HEAD'\)/);
   assert.match(worker, /CF-Connecting-IP.*anonymous/);
 });
+
+test("the release flow pins the deployed source revision instead of a stale placeholder", async () => {
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(pkg.scripts.deploy, "node scripts/deploy.mjs");
+  // The static fallback must be an honest marker, not a plausible-looking lie.
+  assert.match(wrangler, /SOURCE_REVISION = "unpinned"/);
+  const deployScript = await readFile(new URL("../scripts/deploy.mjs", import.meta.url), "utf8");
+  assert.match(deployScript, /rev-parse/, "revision must come from git");
+  assert.match(deployScript, /status.+--porcelain/s, "dirty worktrees must be marked");
+  assert.match(deployScript, /--var/, "wrangler must receive the revision override");
+  assert.match(deployScript, /SOURCE_REVISION:\$\{revision\}/);
+});

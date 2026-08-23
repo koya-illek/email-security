@@ -39,8 +39,14 @@ wrangler login
 
 ```bash
 cd email-security-checker
-wrangler deploy
+npm run deploy
 ```
+
+`npm run deploy` resolves the current git revision and injects it as
+`SOURCE_REVISION`, so `/api/health`, the API directory, and every stored report
+carry truthful provenance. Extra flags pass through, so `npm run deploy -- --dry-run`
+exercises the same injection without deploying. Deploying with plain
+`wrangler deploy` skips the injection and reports the fallback value `unpinned`.
 
 ### Custom Domain (Optional)
 

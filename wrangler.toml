@@ -17,8 +17,10 @@ run_worker_first = true
 
 [vars]
 ENVIRONMENT = "production"
-# Replace this value during a release with the immutable source revision.
-SOURCE_REVISION = "working-tree-2026-08-15"
+# Releases must pin the real revision with `npm run deploy`, which overrides
+# this variable via --var at deploy time. This fallback stays honest when
+# someone deploys without the release script.
+SOURCE_REVISION = "unpinned"
 DAILY_POST_LIMIT = "500"
 REPORT_DAILY_LIMIT = "120"
 

@@ -4,6 +4,7 @@
   "description": "Cloudflare Worker for standards-based email security posture checks",
   "main": "worker.js",
   "scripts": {
+    "deploy": "node scripts/deploy.mjs",
     "test": "npm run test:spf && npm run test:headers && npm run test:integration && npm run test:retention && npm run test:security && npm run test:mcp && npm run test:report-store",
     "check": "wrangler deploy --dry-run",
     "test:spf": "node --test test/rfc7208.cjs",
