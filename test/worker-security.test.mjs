@@ -129,3 +129,15 @@ test("the release flow pins the deployed source revision instead of a stale plac
   assert.match(deployScript, /--var/, "wrangler must receive the revision override");
   assert.match(deployScript, /SOURCE_REVISION:\$\{revision\}/);
 });
+
+test("the shell/metadata audit is committed and wired as a runnable command", async () => {
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(pkg.scripts["audit:html"], "node scripts/audit-html.mjs");
+  const audit = await readFile(new URL("../scripts/audit-html.mjs", import.meta.url), "utf8");
+  // The checks earlier rounds cited must live in the repo, not in scratch:
+  // canonical metadata, structured data, robots/sitemap consistency, and
+  // machine-readable contract validity.
+  for (const topic of ["canonical", "application/ld+json", "robots.txt", "sitemap.xml", "openapi.yaml", "mcp-copilot.yaml"]) {
+    assert.ok(audit.includes(topic), `audit must cover ${topic}`);
+  }
+});

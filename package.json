@@ -7,6 +7,7 @@
     "deploy": "node scripts/deploy.mjs",
     "test": "npm run test:spf && npm run test:headers && npm run test:integration && npm run test:retention && npm run test:security && npm run test:mcp && npm run test:report-store",
     "check": "wrangler deploy --dry-run",
+    "audit:html": "node scripts/audit-html.mjs",
     "test:spf": "node --test test/rfc7208.cjs",
     "test:headers": "node --test test/header-analysis.cjs",
     "test:browser": "playwright test",

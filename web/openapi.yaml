@@ -66,6 +66,7 @@ paths:
       responses:
         '200': { description: Completed domain analysis, content: { application/json: { schema: { $ref: '#/components/schemas/DomainReport' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/BodyTooLarge' }
         '429': { $ref: '#/components/responses/RateLimited' }
   /api/v2/domain-check:
     post:
@@ -85,6 +86,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DomainReport' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/BodyTooLarge' }
         '429': { $ref: '#/components/responses/RateLimited' }
   /api/v2/header-analysis:
     post:
@@ -105,7 +107,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/HeaderReport' }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '413': { description: Header input exceeds 256 KiB }
+        '413': { $ref: '#/components/responses/BodyTooLarge' }
         '429': { $ref: '#/components/responses/RateLimited' }
   /api/batch:
     post:
@@ -120,6 +122,7 @@ paths:
       responses:
         '200': { description: Batch comparison report, content: { application/json: { schema: { $ref: '#/components/schemas/BatchReport' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/BodyTooLarge' }
         '429': { $ref: '#/components/responses/RateLimited' }
   /api/spf/inspect:
     post:
@@ -131,6 +134,7 @@ paths:
       responses:
         '200': { description: SPF inspection, content: { application/json: { schema: { type: object, required: [domain, spf, flatten, request_budget], properties: { domain: { type: string }, spf: { type: object, additionalProperties: true }, flatten: { type: object, additionalProperties: true }, request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/BodyTooLarge' }
         '429': { $ref: '#/components/responses/RateLimited' }
   /api/spf/evaluate:
     post:
@@ -142,6 +146,7 @@ paths:
       responses:
         '200': { description: RFC SPF evaluation result, content: { application/json: { schema: { type: object, required: [status, request_budget], additionalProperties: true, properties: { request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/BodyTooLarge' }
         '429': { $ref: '#/components/responses/RateLimited' }
   /api/records/validate:
     post:
@@ -153,6 +158,7 @@ paths:
       responses:
         '200': { description: Validation errors, warnings, parsed evidence, and the request budget, content: { application/json: { schema: { $ref: '#/components/schemas/ValidationReport' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/BodyTooLarge' }
         '429': { $ref: '#/components/responses/RateLimited' }
   /api/v2/record-build:
     post:
@@ -168,6 +174,7 @@ paths:
       responses:
         '200': { description: Built and validated record, content: { application/json: { schema: { $ref: '#/components/schemas/RecordBuildReport' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/BodyTooLarge' }
         '429': { $ref: '#/components/responses/RateLimited' }
   /api/header/enrich:
     post:
@@ -179,6 +186,7 @@ paths:
       responses:
         '200': { description: Bounded PTR and registration enrichment, content: { application/json: { schema: { type: object, required: [enriched, limit, request_budget], properties: { enriched: { type: array, items: { type: object, additionalProperties: true } }, limit: { type: integer, enum: [10] }, request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/BodyTooLarge' }
         '429': { $ref: '#/components/responses/RateLimited' }
   /api/reports/{reportId}:
     get:
