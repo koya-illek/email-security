@@ -86,6 +86,47 @@ test("analysis schedules scored controls before the unscored PTR observation", (
   assert.doesNotMatch(worker, /DKIM_SELECTORS\]\)\]\.slice\(0,/);
 });
 
+test("a budget-exhausted DKIM scan with findings stays inconclusive, not complete", () => {
+  // Reproduced on microsoft.com: 45/45 subrequests consumed mid-scan, only
+  // selector2 found, yet the report scored excellent with high confidence and
+  // an empty unknown_controls list. A scan that stopped early must land in
+  // unknown_controls regardless of how many selectors it did find; only the
+  // zero-findings branch may keep its own status handling.
+  const analyzeDkimBody = worker.slice(worker.indexOf("function analyzeDKIM("), worker.indexOf("function estimateDkimKeyBits("));
+  assert.ok(analyzeDkimBody.length > 0, "analyzeDKIM must exist");
+  assert.match(
+    analyzeDkimBody,
+    /results\.dnsStatus === 'partial' \|\| results\.dnsStatus === 'budget_exceeded'/,
+    "findings-present branch must treat budget exhaustion like a partial scan"
+  );
+  assert.match(analyzeDkimBody, /DNS budget ran out; the remaining selectors were never checked/);
+  assert.match(analyzeDkimBody, /unknown: partial/);
+});
+
+test("PTR forward confirmation compares addresses, not textual spellings", () => {
+  // Equivalent IPv6 forms across two lookups (2001:db8::1 vs
+  // 2001:db8:0:0:0:0:0:1) must confirm rather than warn.
+  const checkPtrBody = worker.slice(worker.indexOf("async function checkPTR("), worker.indexOf("async function analyzeSPF("));
+  assert.ok(checkPtrBody.length > 0, "checkPTR must exist");
+  assert.match(checkPtrBody, /normalizedAddresses/);
+  assert.match(checkPtrBody, /ipaddr\.parse\(candidate\)\.toString\(\) === normalizedIp/);
+  assert.doesNotMatch(checkPtrBody, /matches:\s*Boolean\(ptr && forward\.includes\(ip\)\)/);
+  // A budget that dies before the first observation is a different cause from
+  // hosts publishing no addresses; the fallback reason must not fabricate one
+  // from the other (live-reproduced on gmail.com under a constrained budget).
+  assert.match(checkPtrBody, /budget ran out before any inbound MX host address could be observed/);
+});
+
+test("the DKIM key estimator reports RSA-3072 instead of warning to rotate it", () => {
+  // Base64 SPKI lengths: 1024 ≈ 200, 2048 ≈ 360-392, 3072 ≈ 533, 4096 ≈ 707;
+  // the previous 550 cutoff classified real 3072-bit keys as 2048.
+  const estimator = worker.slice(worker.indexOf("function estimateDkimKeyBits("), worker.indexOf("function analyzeMX("));
+  assert.ok(estimator.length > 0, "estimateDkimKeyBits must exist");
+  assert.match(estimator, /length < 300\) return 1024/);
+  assert.match(estimator, /length < 450\) return 2048/);
+  assert.match(estimator, /length < 650\) return 3072/);
+});
+
 test("API contract rejects null and wrong-type JSON payloads", () => {
   assert.match(worker, /Request body must be a JSON object/);
   assert.match(worker, /ips must contain up to 10 unique public/);
