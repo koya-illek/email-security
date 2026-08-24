@@ -815,6 +815,13 @@ test('pasting a share link into an open tab loads the report without a reload', 
   await expect(page.locator('#batch-table')).toContainText('example.com');
 });
 
+test('an empty batch submit explains itself instead of silently doing nothing', async ({ page }) => {
+  await page.goto('/#batch');
+  await page.getByRole('button', { name: 'Check All Domains' }).click();
+  await expect(page.locator('#batch-error')).toBeVisible();
+  await expect(page.locator('#batch-error-msg')).toContainText('at least one domain');
+});
+
 test('a batch-row click during an active domain check queues instead of dropping', async ({ page }) => {
   // The row button seeds #domain-input programmatically, which fires no input
   // event; the older request must drain and the newer one must still run and

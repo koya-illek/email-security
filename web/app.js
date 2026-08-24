@@ -1307,7 +1307,12 @@
   batchForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const domains = batchInput.value.split("\n").map(l => l.trim()).filter(Boolean);
-    if (!domains.length) return;
+    if (!domains.length) {
+      // An empty submit must read as refused input, not as a dead button.
+      batchErrorMsg.textContent = "Paste at least one domain, one per line, then run the check.";
+      batchError.classList.remove("hidden");
+      return;
+    }
     if (domains.length > BATCH_MAX_DOMAINS_UI) {
       // Rejecting here avoids spending rate-limit quota on a request the
       // server is guaranteed to refuse.
