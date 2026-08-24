@@ -63,9 +63,10 @@ whitespace, and `psd=u`. Those requests consume API rate-limit capacity, so use
 
 ### Custom Domain (Optional)
 
-```bash
-wrangler custom-domain add email-checker.yourdomain.com
-```
+Custom domains are configured declaratively through the `routes` array in
+`wrangler.toml` (`{ pattern = "your-host", custom_domain = true }`) — there is
+no `wrangler custom-domain` command. The deployed routes are
+`email.illek.ie` plus the legacy `checker.illek.ie` alias.
 
 ## Usage
 
@@ -86,10 +87,14 @@ POST /mcp/v2
 ```
 
 The MCP endpoints implement stateless Streamable HTTP with protocol negotiation
-for `2025-11-25`, `2025-06-18`, and `2024-11-05`. They publish the complete
-read-only tool set through `tools/list`. Copilot Studio can import
-`https://email.illek.ie/mcp-copilot.yaml`; OpenAPI agents can import
+for `2025-11-25`, `2025-06-18`, and `2024-11-05` (an unknown requested version
+negotiates down to the newest supported one, per the lifecycle spec). They
+publish the complete read-only tool set through `tools/list`. Copilot Studio can
+import `https://email.illek.ie/mcp-copilot.yaml`; OpenAPI agents can import
 `https://email.illek.ie/openapi.yaml`. The existing API paths remain compatible.
+Every `tools/call` draws from the 10-per-minute expensive limiter — six times
+the REST header-analysis class — so bulk header analysis over MCP should batch
+its patience or use the REST endpoint instead.
 
 Domain and batch reports include `source_revision`, DNS/provider observations,
 `score_confidence`, and an explicit `request_budget`. DNS timeouts and provider
@@ -173,7 +178,7 @@ globally routable IPv4 or IPv6 addresses.
 
 - **Workers Free**: 100,000 requests/day, 10 ms CPU time, 128 MB memory, 3 MB compressed Worker size, and 50 external subrequests per invocation
 - **Worker header analysis**: zero external subrequests; local worst-case 256 KB parsing benchmark averages below 1 ms (hardware-dependent)
-- **API rate limits**: standard POST `/api` routes allow 60 requests per client per 60 seconds; expensive routes (including the record builder endpoints `/api/records/validate` and `/api/v2/record-build`, which run recursive DNS validation) allow 10 requests per client per 60 seconds. Cloudflare Rate Limiting counters are shared across Worker isolates but scoped to the serving location, so these are not strict global quotas.
+- **API rate limits**: every POST analysis endpoint and MCP tool call sits behind the expensive limiter at 10 requests per client per 60 seconds (the REST twin of MCP's `analyze_email_headers` is the one exception, on the standard 60-per-minute class); daily caps add 500 analysis POSTs and 120 report retrievals per client per UTC day, with `Retry-After` counting down to the real reset. IPv6 clients share one quota bucket per /64 so rotating addresses cannot mint fresh budgets. Cloudflare Rate Limiting counters are shared across Worker isolates but scoped to the serving location, so these are not strict global quotas.
 - **Request budget**: each analysis invocation reserves at most 45 outbound subrequests, leaving platform headroom below the Workers limit of 50. Batch analysis accepts at most 3 domains — each receives an equal slice of the budget and rows whose slice was exhausted carry an exhausted `request_budget` instead of a comparable score — and reports rejected items individually.
 - **Stored reports**: share links are bearer links with 14-day retention. Retrieval and export responses are private and not cacheable.
 
