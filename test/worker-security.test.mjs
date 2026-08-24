@@ -211,6 +211,38 @@ test("DMARC honours sp= for inherited records instead of scoring by the parent's
   assert.match(worker, /score \+= dmarc\.policy === 'reject' \? 35 : 30/);
 });
 
+test("duplicate DMARC tags fail live analysis before any policy value is read", () => {
+  // parseTagRecord silently keeps the last duplicate, so "p=none;p=reject"
+  // was analyzed as whichever came last while the validator refused the same
+  // record outright. The live path must fail the record like receivers do.
+  const analyze = worker.slice(worker.indexOf("function analyzeDMARC(records, discovery"), worker.indexOf("function parseTagRecord(record)"));
+  const duplicateAt = analyze.indexOf("const duplicateTags = []");
+  const failAt = analyze.indexOf("if (duplicateTags.length)");
+  const policyAt = analyze.indexOf("const publishedPolicy = tags.p || null;");
+  assert.ok(duplicateAt > -1, "duplicate-tag detection must exist in analyzeDMARC");
+  assert.ok(failAt > -1, "a duplicate-tag failure branch must exist in analyzeDMARC");
+  assert.ok(policyAt > -1, "policy parsing must exist in analyzeDMARC");
+  assert.ok(failAt < policyAt, "duplicates must fail the record before any tag value is consumed");
+});
+
+test("DMARC report-destination parsing treats the mailto scheme case-insensitively", () => {
+  // RFC 3986 §3.1: schemes are case-insensitive. The validator accepts
+  // MAILTO:, so the authorisation loop must too — uppercase spellings used
+  // to silently skip external-destination verification.
+  const parser = worker.slice(worker.indexOf("function parseMailtoList("), worker.indexOf("function analyzeDKIM("));
+  assert.match(parser, /\/\^mailto:\/i\.test\(item\)/);
+  assert.doesNotMatch(parser, /startsWith\('mailto:'\)/);
+});
+
+test("malformed MX priorities cannot poison the primary-host sort", () => {
+  // DNS data is external input; a NaN priority made Array.sort's comparator
+  // meaningless, letting any record render as "Primary:". Unparsable values
+  // must sort last behind every real priority.
+  const analyzer = worker.slice(worker.indexOf("function analyzeMX("), worker.indexOf("function analyzeCAA("));
+  assert.match(analyzer, /Number\.isFinite\(parsed\) \? parsed : 65535/);
+  assert.match(analyzer, /Number\.isFinite\(a\.priority\) \? a\.priority : 65535/);
+});
+
 test("domain analysis checks external DMARC report authorisation after scored controls", () => {
   const analysis = worker.slice(worker.indexOf("async function analyzeDomain("), worker.indexOf("async function discoverDmarcPolicy("));
   const dkim = analysis.indexOf("await checkDKIMSelectors(");

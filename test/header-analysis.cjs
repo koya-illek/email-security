@@ -180,4 +180,51 @@ describe('Header Analyzer', () => {
       /256 KB/
     );
   });
+
+  it('resolves the From domain through RFC 5322 comments, not display-name asides', () => {
+    // The bare-address scan used to take the last @-sign, so the comment
+    // address drove alignment while the multi-author-domain check stayed
+    // silent — a misanalysis with no failing check.
+    assert.equal(domainFromAddress('alice@example.com (Bob@example.net)'), 'example.com');
+    assert.equal(domainFromAddress('"Alice" <alice@example.com> (sent from phone@example.net)'), 'example.com');
+    assert.deepEqual(authorDomainsFromField('alice@example.com (old alice@example.net)'), ['example.com']);
+  });
+
+  it('keeps Received keyword parsing out of comments', async () => {
+    const result = analyzeEmailHeaders([
+      'From: alice@example.com',
+      'Received: from x.example (note by fake.example here) by mx.real.example;',
+      ' Thu, 23 Jul 2026 20:00:00 +0100'
+    ].join('\r\n'));
+    const hop = result.hops[0];
+    assert.equal(hop.from, 'x.example');
+    assert.equal(hop.by, 'mx.real.example');
+    assert.ok(hop.date.includes('20:00:00'), 'date clause survives a semicolon-free comment');
+  });
+
+  it('reads the authserv-id past a leading comment and keeps quoted ids intact', () => {
+    const commented = analyzeEmailHeaders([
+      'From: alice@example.com',
+      'Authentication-Results: (mx1.example server) mx1.example; spf=pass smtp.mailfrom=alice@example.com'
+    ].join('\r\n'));
+    assert.equal(commented.summary.authservId, 'mx1.example');
+
+    const quoted = analyzeEmailHeaders([
+      'From: alice@example.com',
+      'Authentication-Results: "mx1.example"; spf=pass smtp.mailfrom=alice@example.com'
+    ].join('\r\n'));
+    assert.equal(quoted.summary.authservId, '"mx1.example"');
+  });
+
+  it('prefers the envelope-from SPF clause over a HELO clause in one header', () => {
+    // First-wins used to report the HELO clause's fail; the mailfrom clause
+    // is the message-level verdict per RFC 8601.
+    const result = analyzeEmailHeaders([
+      'From: alice@example.com',
+      'Authentication-Results: mx.example; spf=fail smtp.helo=helo.example; spf=pass smtp.mailfrom=alice@example.com',
+      'Received: from helo.example (helo.example [198.51.100.9]) by mx.example; Thu, 23 Jul 2026 20:00:00 +0100'
+    ].join('\r\n'));
+    assert.equal(result.summary.spf, 'pass');
+    assert.ok(result.checks.some(check => check.status === 'pass' && check.title.startsWith('SPF reported pass')));
+  });
 });

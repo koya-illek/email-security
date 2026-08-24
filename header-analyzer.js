@@ -15,25 +15,17 @@ function normalizeDomain(value) {
     .replace(/[>"'),;]+$/g, '');
 }
 
-function domainFromAddress(value) {
-  const text = String(value || '');
-  const bracketed = [...text.matchAll(/<[^<>]*@([^<>\s]+)>/g)].at(-1);
-  const bare = [...text.matchAll(/@([^\s<>,;]+)/g)].at(-1);
-  return normalizeDomain((bracketed || bare || [])[1]);
-}
-
-function authorDomainsFromField(value) {
-  const text = String(value || '');
+// RFC 5322 §3.2.3 comments and quoted strings hide address-like text from
+// every downstream extraction. "Alice (bob@example.net) <alice@example.com>"
+// must resolve to example.com everywhere — Author Domains, the visible From
+// domain, and Received keyword parsing alike.
+function visibleHeaderText(text) {
   let commentDepth = 0;
   let quoted = false;
   let escaped = false;
   let visible = '';
 
-  // Comments can contain address-like text. Remove them before extracting
-  // Author Domains so "Alice (old alice@example.net) <alice@example.com>"
-  // stays a single-domain From field. Nested comments and quoted parentheses
-  // are handled while the field is still raw boundary data.
-  for (const character of text) {
+  for (const character of String(text || '')) {
     if (escaped) {
       escaped = false;
       if (!commentDepth) visible += character;
@@ -55,10 +47,20 @@ function authorDomainsFromField(value) {
     }
     if (!commentDepth) visible += character;
   }
+  return visible.replace(/"(?:\\.|[^"\\])*"/g, '');
+}
 
-  // Quoted display names may also contain address-like text. The actual
-  // mailbox remains outside the display name or inside angle brackets.
-  const withoutDisplayNames = visible.replace(/"(?:\\.|[^"\\])*"/g, '');
+function domainFromAddress(value) {
+  // Comment text is removed before matching, so the last @-sign belongs to
+  // the real mailbox instead of a display-name aside.
+  const text = visibleHeaderText(value);
+  const bracketed = [...text.matchAll(/<[^<>]*@([^<>\s]+)>/g)].at(-1);
+  const bare = [...text.matchAll(/@([^\s<>,;\]]+)/g)].at(-1);
+  return normalizeDomain((bracketed || bare || [])[1]);
+}
+
+function authorDomainsFromField(value) {
+  const withoutDisplayNames = visibleHeaderText(value);
   return [...new Set(
     [...withoutDisplayNames.matchAll(/@([^\s<>,;\]]+)/g)]
       .map(match => normalizeDomain(match[1]))
@@ -120,9 +122,35 @@ function parseHeaders(raw) {
   return { headers, ordered };
 }
 
+// Removes any run of comment groups opening the value but leaves the rest
+// untouched, so a quoted-string authserv-id survives intact.
+function stripLeadingComments(text) {
+  const source = String(text || '');
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === ' ' || character === '\t') {
+      index += 1;
+      continue;
+    }
+    if (character !== '(') break;
+    let depth = 1;
+    index += 1;
+    while (index < source.length && depth > 0) {
+      if (source[index] === '(') depth += 1;
+      else if (source[index] === ')') depth -= 1;
+      index += 1;
+    }
+  }
+  return source.slice(index);
+}
+
 function parseAuthResults(value) {
+  // Real-world headers open with a CFWS comment ("(mx1.example server)
+  // mx1.example; ...") even though RFC 8601 puts no comment before the
+  // authserv-id; strip leading comments so the identity is the first token.
   const parts = String(value || '').split(';');
-  const authservId = parts.shift()?.trim().split(/\s+/)[0] || 'unknown';
+  const authservId = stripLeadingComments(parts.shift()).trim().split(/\s+/)[0] || 'unknown';
   const methods = [];
   for (const clause of parts) {
     const match = clause.match(/\b(spf|dkim|dmarc)\s*=\s*([a-z]+)/i);
@@ -251,11 +279,17 @@ function extractIpCandidates(value) {
 
 function parseReceived(value, index, total) {
   const text = String(value || '');
-  const from = (text.match(/\bfrom\s+([^\s(;]+)/i) || [])[1] || '';
-  const by = (text.match(/\bby\s+([^\s(;]+)/i) || [])[1] || '';
-  const protocol = (text.match(/\bwith\s+([^\s;]+)/i) || [])[1] || '';
-  const id = (text.match(/\bid\s+([^\s;]+)/i) || [])[1] || '';
-  const dateText = text.includes(';') ? text.slice(text.lastIndexOf(';') + 1).trim() : '';
+  // Keyword extraction must ignore RFC 5322 comments — "(note by
+  // fake.example here)" must not become the by-host — while IP candidates
+  // still come from the full raw value, where the real connection data sits.
+  const visible = visibleHeaderText(text);
+  const from = (visible.match(/\bfrom\s+([^\s(;]+)/i) || [])[1] || '';
+  const by = (visible.match(/\bby\s+([^\s(;]+)/i) || [])[1] || '';
+  const protocol = (visible.match(/\bwith\s+([^\s;]+)/i) || [])[1] || '';
+  const id = (visible.match(/\bid\s+([^\s;]+)/i) || [])[1] || '';
+  // The date clause follows the last top-level semicolon; a semicolon inside
+  // a comment no longer derails the split.
+  const dateText = visible.includes(';') ? visible.slice(visible.lastIndexOf(';') + 1).trim() : '';
   const parsedDate = dateText && !Number.isNaN(Date.parse(dateText)) ? new Date(dateText).toISOString() : null;
   return {
     index: index + 1,
@@ -290,6 +324,17 @@ function analyzeEmailHeaders(raw) {
     const candidates = selectedAuth.methods.filter(item => item.method === method);
     if (method === 'dkim' && fromDomain) {
       return candidates.find(item => item.result === 'pass' && alignment(fromDomain, item.headerD).aligned) || candidates[0];
+    }
+    if (method === 'spf') {
+      // RFC 8601 lets one header carry both an smtp.helo and an
+      // smtp.mailfrom SPF result; whichever appeared first is not the rule.
+      // The envelope-from clause is the message-level verdict, so it wins,
+      // with an aligned pass preferred among envelope clauses like DKIM's
+      // aligned-signature preference.
+      const envelopeClauses = candidates.filter(item => item.smtpMailfrom);
+      return envelopeClauses.find(item => item.result === 'pass' && fromDomain && alignment(fromDomain, item.smtpMailfrom).aligned)
+        || envelopeClauses[0]
+        || candidates[0];
     }
     return candidates[0];
   };

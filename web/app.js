@@ -565,7 +565,7 @@
     const rows = d.records
       .map(
         (x) =>
-          `<tr><td>${x.priority}</td><td><code>${esc(x.host)}</code></td></tr>`
+          `<tr><td>${esc(x.priority)}</td><td><code>${esc(x.host)}</code></td></tr>`
       )
       .join("");
     return `<details class="collapsible-section">

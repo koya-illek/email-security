@@ -2134,6 +2134,34 @@ function analyzeDMARC(records, discovery = {}) {
   }
 
   const record = dmarcRecords[0];
+  // The validator refuses duplicate tags, and receivers treat them as
+  // malformed, but parseTagRecord silently keeps the last value — a record
+  // like "p=none;p=reject" would be analyzed as whichever came last with no
+  // diagnostic. Fail here exactly like validateDmarcRecord does.
+  const seenTags = new Set();
+  const duplicateTags = [];
+  String(record).split(';').forEach(part => {
+    const index = part.indexOf('=');
+    if (index < 1) return;
+    const key = part.slice(0, index).trim().toLowerCase();
+    if (seenTags.has(key)) duplicateTags.push(key);
+    seenTags.add(key);
+  });
+  if (duplicateTags.length) {
+    return {
+      status: 'fail',
+      record,
+      checks: [{
+        status: 'fail',
+        title: 'DMARC tag appears more than once',
+        detail: `Tag${duplicateTags.length > 1 ? 's' : ''} ${duplicateTags.join(', ')} appear more than once. Receivers treat such records as invalid and may ignore the policy entirely.`,
+        recommendation: 'Publish exactly one occurrence of each DMARC tag.'
+      }],
+      policy: null,
+      rua: null,
+      ruf: null
+    };
+  }
   const checks = [];
   const tags = parseTagRecord(record);
   if (discovery.inherited) {
@@ -2299,10 +2327,13 @@ function parseTagRecord(record) {
 
 function parseMailtoList(value) {
   if (!value) return [];
+  // URI schemes are case-insensitive (RFC 3986 §3.1); the validator accepts
+  // MAILTO: so the authorisation loop must too, or uppercase spellings
+  // silently skip external-destination verification.
   return value
     .split(',')
     .map(item => item.trim())
-    .filter(item => item.startsWith('mailto:'))
+    .filter(item => /^mailto:/i.test(item))
     .map(item => item.slice(7).split('!')[0])
     .filter(Boolean);
 }
@@ -2446,8 +2477,12 @@ function analyzeMX(records) {
 
   const mx = records.map(r => {
     const [priority, ...hostParts] = String(r).trim().split(/\s+/);
-    return { priority: Number.parseInt(priority, 10), host: hostParts.join(' ').replace(/\.$/, '') };
-  }).sort((a, b) => a.priority - b.priority);
+    // DNS data is external input; an unparsable priority must not poison the
+    // sort comparator with NaN and shuffle the whole table. Malformed rows
+    // sort last so the rendered primary host stays the lowest real value.
+    const parsed = Number.parseInt(priority, 10);
+    return { priority: Number.isFinite(parsed) ? parsed : 65535, host: hostParts.join(' ').replace(/\.$/, '') };
+  }).sort((a, b) => (Number.isFinite(a.priority) ? a.priority : 65535) - (Number.isFinite(b.priority) ? b.priority : 65535));
   const nullMx = mx.length === 1 && mx[0].priority === 0 && (mx[0].host === '' || mx[0].host === '.');
   const mixedNullMx = mx.some(item => item.priority === 0 && (item.host === '' || item.host === '.')) && !nullMx;
   if (mixedNullMx) {
