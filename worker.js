@@ -406,7 +406,24 @@ export default {
     return handleRequest(request, env);
   },
   async scheduled(_controller, env) {
-    await runScheduledCleanup(env);
+    // A cron failure that stays silent is indistinguishable from a cleanup
+    // that never ran; the outcome line also names how many expired rows the
+    // DELETE removed so operators can see the job working.
+    try {
+      const result = await runScheduledCleanup(env);
+      console.log(JSON.stringify({
+        level: 'info',
+        message: 'Expired report cleanup completed',
+        deleted: result?.meta?.changes ?? null
+      }));
+    } catch (error) {
+      console.error(JSON.stringify({
+        level: 'error',
+        message: 'Expired report cleanup failed',
+        errorName: error?.name || 'Unknown',
+        detail: String(error?.message || error)
+      }));
+    }
   }
 };
 
@@ -484,8 +501,18 @@ async function handleRequest(request, env) {
     // into an all-day lockout for whoever shares the client IP.
     try {
       retryAfter = await consumePostRateLimit(request, routePathname, env);
-    } catch {
-      return jsonResponse({ error: 'Rate limiting is unavailable.' }, 503, corsHeaders);
+    } catch (error) {
+      // A missing limiter binding and a platform blip are different
+      // operational problems; without this line they collapse into one
+      // opaque 503 in the logs.
+      console.error(JSON.stringify({
+        level: 'error',
+        message: 'Rate limiter unavailable',
+        path: routePathname,
+        errorName: error?.name || 'Unknown',
+        detail: String(error?.message || error)
+      }));
+      return jsonResponse({ error: 'Rate limiting is unavailable.' }, 503, { ...corsHeaders, 'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS) });
     }
     if (retryAfter !== null) {
       return jsonResponse(
@@ -497,9 +524,16 @@ async function handleRequest(request, env) {
     try {
       const dailySuccess = await consumeDailyRateLimit(request, env, 'post', Number(env.DAILY_POST_LIMIT) || 500);
       if (!dailySuccess) return jsonResponse({ error: 'Daily API request limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(secondsUntilDailyReset()) });
-    } catch {
+    } catch (error) {
       // A D1 outage must not take stateless endpoints down with report
-      // storage; degrade to stateless service.
+      // storage; degrade to stateless service — observably.
+      console.error(JSON.stringify({
+        level: 'error',
+        message: 'Daily quota accounting degraded to stateless service',
+        path: routePathname,
+        errorName: error?.name || 'Unknown',
+        detail: String(error?.message || error)
+      }));
     }
   }
 
