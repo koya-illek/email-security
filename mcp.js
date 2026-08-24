@@ -105,8 +105,24 @@ async function handleMcp(request, execute) {
       isError: false,
     });
   } catch (error) {
-    const text = error instanceof Error ? error.message : 'Email security analysis failed';
-    return rpcResult(message.id, { content: [{ type: 'text', text }], isError: true });
+    // Validation errors thrown by the dispatcher are intentional guidance
+    // agents can act on (exposed marker or an explicit HTTP-style status).
+    // Anything else is an unexpected fault: answer with a reference instead
+    // of engine text and log the detail server-side.
+    const intentional = error?.exposed === true || Number.isInteger(error?.status);
+    if (!intentional) {
+      const reference = [...crypto.getRandomValues(new Uint8Array(4))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+      console.error(JSON.stringify({
+        level: 'error',
+        message: 'Unhandled MCP tool fault',
+        reference,
+        tool: params.name,
+        errorName: error?.name || 'Unknown',
+        detail: String(error?.message || error)
+      }));
+      return rpcResult(message.id, { content: [{ type: 'text', text: `Email security analysis failed internally (${reference}).` }], isError: true });
+    }
+    return rpcResult(message.id, { content: [{ type: 'text', text: error.message || 'Email security analysis failed' }], isError: true });
   }
 }
 

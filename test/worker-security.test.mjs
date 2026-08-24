@@ -385,6 +385,36 @@ test("quota keys survive IPv6 /64 rotation and IPv4 spelling drift", () => {
   }
 });
 
+test("unexpected faults answer opaque references; crafted errors keep their copy", () => {
+  const fault = worker.slice(worker.indexOf("function requestErrorResponse("), worker.indexOf("async function readJsonBody("));
+  assert.ok(fault.length > 0, "the shared fault responder must exist");
+  // Only errors crafted for the client (exposed marker or explicit status)
+  // may echo their message; everything else gets an opaque reference and a
+  // server-side log line, never engine text like a TypeError's stack hint.
+  assert.match(fault, /const intentional = error\?\.exposed === true \|\| Number\.isInteger\(error\?\.status\);/);
+  assert.match(fault, /jsonResponse\(\{ error: `Internal error \(\$\{reference\}\)\.` \}, 500, corsHeaders\)/);
+  assert.match(fault, /console\.error\(JSON\.stringify/);
+  assert.match(worker, /function exposedError\(message\)/);
+});
+
+test("the MCP tool-call catch mirrors the REST fault discipline", async () => {
+  const mcp = await readFile(new URL("../mcp.js", import.meta.url), "utf8");
+  const caught = mcp.slice(mcp.indexOf("} catch (error) {"), mcp.lastIndexOf("}"));
+  assert.match(caught, /const intentional = error\?\.exposed === true \|\| Number\.isInteger\(error\?\.status\);/);
+  assert.match(caught, /failed internally \(\$\{reference\}\)/);
+  assert.match(caught, /console\.error\(JSON\.stringify/);
+});
+
+test("crafted validation errors are marked exposed at their throw sites", async () => {
+  const analyzer = await readFile(new URL("../header-analyzer.js", import.meta.url), "utf8");
+  assert.match(analyzer, /empty\.exposed = true;/);
+  assert.match(analyzer, /oversized\.exposed = true;/);
+  const dispatcher = worker.slice(worker.indexOf("if (MCP_PATHS.has(url.pathname))"), worker.indexOf("// API endpoint"));
+  const throwCount = (dispatcher.match(/throw exposedError\(/g) || []).length;
+  assert.ok(throwCount >= 10, `MCP dispatch must mark its validation throws (${throwCount} found)`);
+  assert.doesNotMatch(dispatcher, /throw new Error\(/, "unmarked plain Errors would mask as internal faults");
+});
+
 test("unexpected analysis failures answer 500 while dependency outages keep 503", () => {
   // Status policy: an unexpected exception is a server fault (500); 503 is
   // reserved for the named dependency outages (rate limiter, D1 accounting,

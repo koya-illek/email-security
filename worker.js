@@ -227,9 +227,18 @@ async function createBatchReport(domains, env, requestBudget = null) {
     } catch (error) {
       // An analysis error is not evidence about the domain; report every
       // control as inconclusive so the row cannot read as a failing setup.
+      // The fault's engine text stays in the logs — the row carries only a
+      // readable instruction.
+      console.error(JSON.stringify({
+        level: 'error',
+        message: 'Batch row analysis fault',
+        domain,
+        errorName: error?.name || 'Unknown',
+        detail: String(error?.message || error)
+      }));
       const unavailable = { status: 'info' };
       return {
-        domain, overall_score: 0, overall_status: 'error', error: error.message,
+        domain, overall_score: 0, overall_status: 'error', error: 'Analysis failed unexpectedly. Retry this domain as a single check.',
         spf: unavailable, dkim: unavailable, dmarc: unavailable, mx: unavailable, transport: unavailable,
         request_budget: domainBudget.snapshot(),
       };
@@ -255,7 +264,7 @@ async function createBatchReport(domains, env, requestBudget = null) {
 async function buildEmailRecord(input, budget = null) {
   const type = String(input.type || '').toLowerCase();
   const domain = normalizeDomain(input.domain);
-  if (!domain || !isValidDomain(domain)) throw new Error('A valid domain is required');
+  if (!domain || !isValidDomain(domain)) throw exposedError('A valid domain is required');
   if (type === 'spf') {
     const mechanisms = Array.isArray(input.mechanisms) ? input.mechanisms.map(value => String(value).trim()).filter(Boolean) : [];
     const policy = ['~all', '-all', '?all', '+all', ''].includes(input.policy) ? input.policy : '~all';
@@ -281,7 +290,7 @@ async function buildEmailRecord(input, budget = null) {
     if (policy !== 'none' && input.reviewedReports !== true) safetyWarnings.push('Review DMARC aggregate reports before requesting quarantine or rejection.');
     return { type, host: `_dmarc.${domain}`, record, validation, safetyWarnings, publishReady: validation.valid && !safetyWarnings.length };
   }
-  throw new Error('type must be spf or dmarc');
+  throw exposedError('type must be spf or dmarc');
 }
 
 const DKIM_SELECTORS = [
@@ -426,24 +435,24 @@ async function handleRequest(request, env) {
   if (MCP_PATHS.has(url.pathname)) {
     return handleMcp(request, async (tool, args) => {
       if (tool === 'analyze_email_headers') {
-        if (typeof args.headers !== 'string') throw new Error('headers must be a string');
-        if (new TextEncoder().encode(args.headers).byteLength > HEADER_JSON_BODY_MAX_BYTES) throw new Error('headers exceeds the 256 KiB limit');
+        if (typeof args.headers !== 'string') throw exposedError('headers must be a string');
+        if (new TextEncoder().encode(args.headers).byteLength > HEADER_JSON_BODY_MAX_BYTES) throw exposedError('headers exceeds the 256 KiB limit');
         return analyzeEmailHeaders(args.headers);
       }
       if (tool === 'analyze_email_domains_batch') {
-        if (!Array.isArray(args.domains)) throw new Error('domains must be an array');
+        if (!Array.isArray(args.domains)) throw exposedError('domains must be an array');
         return createBatchReport(args.domains, env, requestBudget);
       }
       if (tool === 'inspect_spf') {
         const domain = normalizeDomain(args.domain);
-        if (!domain || !isValidDomain(domain)) throw new Error('A valid public domain is required');
+        if (!domain || !isValidDomain(domain)) throw exposedError('A valid public domain is required');
         const txtRecords = await queryDNS(domain, 'TXT', requestBudget);
         const spf = await analyzeSPF(domain, txtRecords, requestBudget);
         return { domain, spf, flatten: await buildSpfFlattenPreview(domain, spf.record, requestBudget), request_budget: requestBudget.snapshot() };
       }
       if (tool === 'evaluate_spf') {
         const domain = normalizeDomain(args.domain || String(args.sender || '').split('@').pop());
-        if (!domain || !isValidDomain(domain) || typeof args.ip !== 'string') throw new Error('A valid domain (or sender) and client IP are required');
+        if (!domain || !isValidDomain(domain) || typeof args.ip !== 'string') throw exposedError('A valid domain (or sender) and client IP are required');
         const result = await evaluateSpf({
           ip: args.ip, sender: args.sender || `postmaster@${domain}`, helo: args.helo || domain,
           mta: 'email-security-checker', resolver: args.record ? makeSpfRecordResolver(domain, args.record, requestBudget) : (name, type) => spfDnsResolver(name, type, requestBudget),
@@ -456,7 +465,7 @@ async function handleRequest(request, env) {
         if (domain && !isValidDomain(domain)) return { valid: false, errors: ['Enter a valid domain name.'], warnings: [], request_budget: requestBudget.snapshot() };
         if (args.type === 'spf') return { ...(await validateSpfRecord(domain, args.record, requestBudget)), request_budget: requestBudget.snapshot() };
         if (args.type === 'dmarc') return { ...(await validateDmarcRecord(domain, args.record, requestBudget)), request_budget: requestBudget.snapshot() };
-        throw new Error('type must be spf or dmarc');
+        throw exposedError('type must be spf or dmarc');
       }
       if (tool === 'build_email_record') return { ...(await buildEmailRecord(args, requestBudget)), request_budget: requestBudget.snapshot() };
       if (tool === 'enrich_email_hops') {
@@ -464,21 +473,21 @@ async function handleRequest(request, env) {
         // uniqueItems schema: reject rather than silently dedupe, so agents
         // see one behavior across both surfaces.
         if (!Array.isArray(args.ips) || args.ips.length > 10 || args.ips.some(ip => typeof ip !== 'string' || !isPublicIpAddress(ip))) {
-          throw new Error('ips must contain up to 10 unique public IPv4 or IPv6 addresses');
+          throw exposedError('ips must contain up to 10 unique public IPv4 or IPv6 addresses');
         }
         const cleanIps = [...new Set(args.ips)];
-        if (cleanIps.length !== args.ips.length) throw new Error('ips must not contain duplicates');
+        if (cleanIps.length !== args.ips.length) throw exposedError('ips must not contain duplicates');
         return { enriched: await Promise.all(cleanIps.map(ip => enrichIp(ip, requestBudget))), limit: 10, request_budget: requestBudget.snapshot() };
       }
       if (tool === 'get_email_security_report') {
         const reportId = String(args.reportId || '');
-        if (!REPORT_ID_RE.test(reportId)) throw new Error('A valid 16-character report ID is required');
+        if (!REPORT_ID_RE.test(reportId)) throw exposedError('A valid 16-character report ID is required');
         const report = await loadReport(env, reportId);
-        if (!report) throw new Error('Report not found or expired');
+        if (!report) throw exposedError('Report not found or expired');
         return report;
       }
       const cleanDomain = normalizeDomain(args.domain);
-      if (!cleanDomain || !isValidDomain(cleanDomain)) throw new Error('A valid public domain is required');
+      if (!cleanDomain || !isValidDomain(cleanDomain)) throw exposedError('A valid public domain is required');
       return createDomainReport(cleanDomain, env, requestBudget);
     });
   }
@@ -754,9 +763,34 @@ class InvalidRequestError extends Error {
   }
 }
 
-function requestErrorResponse(error, corsHeaders, fallbackStatus = 500) {
+// Marks a thrown error's message as intentional client-facing copy so
+// requestErrorResponse echoes it verbatim; unmarked errors are treated as
+// unexpected faults and answered with an opaque reference instead.
+function exposedError(message) {
+  const error = new Error(message);
+  error.exposed = true;
+  return error;
+}
+
+function requestErrorResponse(error, corsHeaders, fallbackStatus) {
   const limited = bodyLimitResponse(error, corsHeaders);
   if (limited) return limited;
+  // Errors crafted for the client carry intentional copy (their own status
+  // or an exposed marker). Anything else is an unexpected fault: its engine
+  // text must not reach the wire, and it is a server fault (500) even on a
+  // route whose validation failures answer 400.
+  const intentional = error?.exposed === true || Number.isInteger(error?.status);
+  if (!intentional) {
+    const reference = [...crypto.getRandomValues(new Uint8Array(4))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+    console.error(JSON.stringify({
+      level: 'error',
+      message: 'Unhandled request fault',
+      reference,
+      errorName: error?.name || 'Unknown',
+      detail: String(error?.message || error)
+    }));
+    return jsonResponse({ error: `Internal error (${reference}).` }, 500, corsHeaders);
+  }
   const status = Number.isInteger(error?.status) ? error.status : fallbackStatus;
   return jsonResponse({ error: error?.message || 'Request failed' }, status, corsHeaders);
 }
@@ -1452,12 +1486,14 @@ async function spfDnsResolver(name, type, budget = null) {
   const records = await queryDNS(name, type, budget);
   const status = records.dnsStatus;
   if (status === 'nxdomain' || status === 'nodata') {
-    const err = new Error(status === 'nxdomain' ? 'DNS name does not exist' : 'No records of requested type');
+    // Coded DNS diagnostics are intentional evidence for callers evaluating
+    // a policy; mark them exposed so the fault path never masks them.
+    const err = exposedError(status === 'nxdomain' ? 'DNS name does not exist' : 'No records of requested type');
     err.code = status === 'nxdomain' ? 'ENOTFOUND' : 'ENODATA';
     throw err;
   }
   if (status === 'timeout' || status === 'servfail' || status === 'error' || status === 'budget_exceeded') {
-    const err = new Error(records.dnsError || `DNS ${status}`);
+    const err = exposedError(records.dnsError || `DNS ${status}`);
     err.code = status === 'timeout' ? 'ETIMEOUT' : status === 'servfail' ? 'ESERVFAIL' : status === 'budget_exceeded' ? 'EBUDGET' : 'EREFUSED';
     throw err;
   }

@@ -88,9 +88,18 @@ function alignment(fromDomain, candidateDomain) {
 
 function parseHeaders(raw) {
   const source = String(raw || '');
-  if (!source.trim()) throw new Error('Paste the complete message headers first.');
+  // These messages are crafted user guidance; the exposed marker lets the
+  // worker's fault path echo them verbatim instead of masking them as an
+  // internal error.
+  if (!source.trim()) {
+    const empty = new Error('Paste the complete message headers first.');
+    empty.exposed = true;
+    throw empty;
+  }
   if (Buffer.byteLength(source, 'utf8') > MAX_HEADER_BYTES) {
-    throw new Error('Headers exceed the 256 KB analysis limit.');
+    const oversized = new Error('Headers exceed the 256 KB analysis limit.');
+    oversized.exposed = true;
+    throw oversized;
   }
 
   const headerBlock = source.replace(/\r\n?/g, '\n').split(/\n\n/, 1)[0];
