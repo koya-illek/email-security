@@ -52,6 +52,13 @@ paths:
     get:
       operationId: getEmailSecurityDirectory
       summary: List supported REST and MCP endpoints
+      description: The trailing-slash variant /api/ and the /api/v2 alias answer identically.
+      responses:
+        '200': { description: Endpoint directory, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/v2:
+    get:
+      operationId: getEmailSecurityDirectoryV2
+      summary: Alias of the endpoint directory at /api
       responses:
         '200': { description: Endpoint directory, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
   /api/check:
@@ -69,6 +76,7 @@ paths:
         '413': { $ref: '#/components/responses/BodyTooLarge' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/v2/domain-check:
     post:
       operationId: analyzeEmailDomain
@@ -90,6 +98,7 @@ paths:
         '413': { $ref: '#/components/responses/BodyTooLarge' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/v2/header-analysis:
     post:
       operationId: analyzeEmailHeaders
@@ -112,6 +121,7 @@ paths:
         '413': { $ref: '#/components/responses/BodyTooLarge' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/batch:
     post:
       operationId: analyzeEmailDomainsBatch
@@ -128,6 +138,7 @@ paths:
         '413': { $ref: '#/components/responses/BodyTooLarge' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/spf/inspect:
     post:
       operationId: inspectSpf
@@ -141,6 +152,7 @@ paths:
         '413': { $ref: '#/components/responses/BodyTooLarge' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/spf/evaluate:
     post:
       operationId: evaluateSpf
@@ -154,6 +166,7 @@ paths:
         '413': { $ref: '#/components/responses/BodyTooLarge' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/records/validate:
     post:
       operationId: validateEmailRecord
@@ -167,6 +180,7 @@ paths:
         '413': { $ref: '#/components/responses/BodyTooLarge' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/v2/record-build:
     post:
       operationId: buildEmailRecord
@@ -184,6 +198,7 @@ paths:
         '413': { $ref: '#/components/responses/BodyTooLarge' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/header/enrich:
     post:
       operationId: enrichEmailHops
@@ -197,7 +212,19 @@ paths:
         '413': { $ref: '#/components/responses/BodyTooLarge' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/reports/{reportId}:
+    head:
+      operationId: probeEmailSecurityReport
+      summary: Probe an unexpired report without a response body
+      description: Shares the GET contract, including quota accounting; the runtime strips the body.
+      parameters:
+        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}$' } }
+      responses:
+        '200': { description: The report exists and is unexpired }
+        '404': { description: Report not found or expired }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { description: Report storage or usage accounting is temporarily unavailable; the report is not known to be gone }
     get:
       operationId: getEmailSecurityReport
       summary: Retrieve an unexpired domain or batch report
@@ -208,9 +235,10 @@ paths:
           description: Stored domain or batch report. The response is a bearer-link resource and is private and not cacheable.
           headers:
             Cache-Control: { schema: { type: string, example: 'private, no-store' } }
-            X-Report-Retention-Days: { schema: { type: integer, example: 14 } }
+            X-Report-Retention-Days: { $ref: '#/components/headers/XReportRetentionDays' }
           content: { application/json: { schema: { type: object, additionalProperties: true } } }
         '404': { description: Report not found or expired }
+        '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { description: Report storage or usage accounting is temporarily unavailable; the report is not known to be gone }
   /api/reports/{reportId}/export:
@@ -224,16 +252,37 @@ paths:
           description: JSON report attachment. The response is private and not cacheable.
           headers:
             Cache-Control: { schema: { type: string, example: 'private, no-store' } }
-            X-Report-Retention-Days: { schema: { type: integer, example: 14 } }
+            X-Report-Retention-Days: { $ref: '#/components/headers/XReportRetentionDays' }
           content: { application/json: { schema: { type: object, additionalProperties: true } } }
         '404': { description: Report not found or expired }
+        '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { description: Report storage or usage accounting is temporarily unavailable; the report is not known to be gone }
   /mcp/v2:
     post:
       operationId: invokeEmailSecurityMcp
       summary: Invoke the stateless Streamable HTTP MCP endpoint
-      description: Send JSON-RPC 2.0 messages. Accept must include application/json and text/event-stream. Initialize negotiates 2025-11-25, 2025-06-18, or 2024-11-05.
+      description: |
+        Send JSON-RPC 2.0 messages. Accept must include application/json and text/event-stream.
+        Initialize negotiates 2025-11-25, 2025-06-18, or 2024-11-05. The unversioned /mcp path
+        is an exact alias of this endpoint. Preflight (OPTIONS) is answered by this surface
+        with Access-Control-Allow-Methods: POST, OPTIONS.
+      parameters:
+        - { name: MCP-Protocol-Version, in: header, required: false, schema: { type: string, enum: ['2025-11-25', '2025-06-18', '2024-11-05'] } }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { type: object, required: [jsonrpc, method], additionalProperties: true } }
+      responses:
+        '200': { description: JSON-RPC response, content: { application/json: { schema: { type: object, required: [jsonrpc], additionalProperties: true } } } }
+        '202': { description: Notification accepted }
+        '406': { description: Accept header must include both MCP response media types }
+        '415': { description: Content-Type must be application/json }
+  /mcp:
+    post:
+      operationId: invokeEmailSecurityMcpUnversioned
+      summary: Unversioned alias of /mcp/v2
+      description: Behaves identically to /mcp/v2; kept for clients that discovered the endpoint before versioning.
       parameters:
         - { name: MCP-Protocol-Version, in: header, required: false, schema: { type: string, enum: ['2025-11-25', '2025-06-18', '2024-11-05'] } }
       requestBody:
@@ -246,6 +295,16 @@ paths:
         '406': { description: Accept header must include both MCP response media types }
         '415': { description: Content-Type must be application/json }
 components:
+  headers:
+    RetryAfter:
+      description: Seconds until the caller may retry (daily limits report a full day).
+      schema: { type: integer, minimum: 1 }
+    Allow:
+      description: HTTP methods the path supports.
+      schema: { type: string, example: 'POST' }
+    XReportRetentionDays:
+      description: Days a bearer-link report is retained before deletion.
+      schema: { type: integer, example: 14 }
   schemas:
     DomainRequest:
       type: object
@@ -420,13 +479,22 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: Unexpected server fault; the analysis made no claim about the requested domain or headers
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     MethodNotAllowed:
-      description: The path exists but not for this HTTP method; the Allow header lists supported methods
+      description: The path exists but not for this HTTP method
+      headers:
+        Allow: { $ref: '#/components/headers/Allow' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     RateLimited:
-      description: Request limit reached; retry after the interval in the response headers
+      description: Request limit reached; retry after the interval in the Retry-After header
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

@@ -137,21 +137,31 @@ await Promise.all([
     assert.match(String(spec.openapi), /^3\./, 'openapi must be a 3.x document');
     assert.ok(spec.info?.title && spec.info?.version);
     for (const path of [
-      '/api/health', '/api/check', '/api/v2/domain-check', '/api/v2/header-analysis',
+      '/api/health', '/api', '/api/v2', '/api/check', '/api/v2/domain-check', '/api/v2/header-analysis',
       '/api/batch', '/api/spf/inspect', '/api/spf/evaluate', '/api/records/validate',
       '/api/v2/record-build', '/api/header/enrich', '/api/reports/{reportId}',
-      '/api/reports/{reportId}/export', '/mcp/v2'
+      '/api/reports/{reportId}/export', '/mcp', '/mcp/v2'
     ]) {
       assert.ok(spec.paths[path], `openapi is missing ${path}`);
     }
     assert.ok(spec.paths['/api/health'].get, 'health must document GET');
     assert.ok(spec.paths['/api/health'].head, 'health must document HEAD');
-    const reportGet = spec.paths['/api/reports/{reportId}'].get;
-    assert.ok(reportGet.responses['404'] && reportGet.responses['503'],
+    const reportPath = spec.paths['/api/reports/{reportId}'];
+    assert.ok(reportPath.get && reportPath.head, 'report retrieval must document GET and HEAD');
+    assert.ok(reportPath.get.responses['404'] && reportPath.get.responses['503'],
       'report retrieval must document absence (404) and storage failure (503)');
-    for (const path of ['/api/check', '/api/batch', '/api/records/validate']) {
-      assert.ok(spec.paths[path].post.responses['413'], `${path} must document the body-cap 413`);
+    assert.ok(reportPath.get.responses['405'], 'report retrieval must document the wrong-verb 405');
+    // The status policy: unexpected faults are 500 on every analysis route;
+    // 503 appears only where a named dependency outage answers.
+    for (const path of ['/api/check', '/api/v2/domain-check', '/api/v2/header-analysis', '/api/batch',
+      '/api/spf/inspect', '/api/spf/evaluate', '/api/records/validate', '/api/v2/record-build', '/api/header/enrich']) {
+      assert.equal(spec.paths[path].post.responses['500']?.$ref, '#/components/responses/InternalError',
+        `${path} must document the unexpected-fault 500`);
     }
+    assert.equal(String(spec.components?.responses?.RateLimited?.headers?.['Retry-After']?.$ref || ''),
+      '#/components/headers/RetryAfter', 'rate limiting must declare its Retry-After header');
+    assert.equal(String(spec.components?.responses?.MethodNotAllowed?.headers?.Allow?.$ref || ''),
+      '#/components/headers/Allow', '405s must declare their Allow header');
   }),
 
   check('MCP connector manifest parses', async () => {
