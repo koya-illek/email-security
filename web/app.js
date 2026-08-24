@@ -1230,7 +1230,7 @@
       }
     } finally {
       enrichHeadersBtn.textContent = "Enrich Hops";
-      enrichHeadersBtn.disabled = !(lastHeaderAnalysis?.ips.length);
+      enrichHeadersBtn.disabled = !(lastHeaderAnalysis?.ips?.length);
     }
   });
 
