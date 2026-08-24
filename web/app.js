@@ -583,7 +583,10 @@
         ${chip}
       </summary>
       <div class="cs-body">
-        <table class="mx-table"><thead><tr><th>Priority</th><th>Mail Server</th></tr></thead><tbody>${rows}</tbody></table>
+        <table class="mx-table">
+          <caption class="sr-only">MX records for ${esc(d.domain || "the domain")}</caption>
+          <thead><tr><th scope="col">Priority</th><th scope="col">Mail Server</th></tr></thead><tbody>${rows}</tbody>
+        </table>
         ${mxCheckItems(d)}
       </div>
     </details>`;
@@ -1580,11 +1583,11 @@
       { key: "transport", label: "Transport" }
     ];
 
-    let html = "<thead><tr>";
+    let html = '<caption class="sr-only">Batch domain comparison</caption><thead><tr>';
     headers.forEach(h => {
       const cls = batchSortCol === h.key ? (batchSortDir > 0 ? "sort-asc" : "sort-desc") : "";
       const sort = batchSortCol === h.key ? (batchSortDir > 0 ? "ascending" : "descending") : "none";
-      html += '<th class="' + cls + '" aria-sort="' + sort + '"><button class="sort-button" type="button" data-col="' + h.key + '" aria-label="Sort by ' + esc(h.label) + '">' + esc(h.label) + '</button></th>';
+      html += '<th scope="col" class="' + cls + '" aria-sort="' + sort + '"><button class="sort-button" type="button" data-col="' + h.key + '" aria-label="Sort by ' + esc(h.label) + '">' + esc(h.label) + '</button></th>';
     });
     html += "</tr></thead><tbody>";
 

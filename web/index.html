@@ -109,8 +109,11 @@
             <button class="icon-button" id="new-check" type="button" aria-label="Start a new check">+</button>
           </div>
         </header>
-        <p class="share-note" id="domain-share-note" role="status"></p>
-        <p class="share-note" id="domain-confidence" role="status"></p>
+        <!-- Plain paragraphs, not role=status: the completion announcement
+             already carries score/confidence, so these visual details must
+             not queue competing polite updates. -->
+        <p class="share-note" id="domain-share-note"></p>
+        <p class="share-note" id="domain-confidence"></p>
 
         <div class="metrics" id="domain-metrics"></div>
 
@@ -167,7 +170,7 @@
             <button class="secondary-button" id="batch-export" type="button">Export JSON</button>
           </div>
         </header>
-        <p class="share-note" id="batch-share-note" role="status"></p>
+        <p class="share-note" id="batch-share-note"></p>
         <div class="batch-table-wrap">
           <table class="batch-table" id="batch-table"></table>
         </div>
