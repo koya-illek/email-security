@@ -92,9 +92,9 @@ negotiates down to the newest supported one, per the lifecycle spec). They
 publish the complete read-only tool set through `tools/list`. Copilot Studio can
 import `https://email.illek.ie/mcp-copilot.yaml`; OpenAPI agents can import
 `https://email.illek.ie/openapi.yaml`. The existing API paths remain compatible.
-Every `tools/call` draws from the 10-per-minute expensive limiter — six times
-the REST header-analysis class — so bulk header analysis over MCP should batch
-its patience or use the REST endpoint instead.
+Every `tools/call` draws from the 10-per-minute expensive limiter — one-sixth
+of the REST header-analysis class — so bulk header analysis over MCP should
+batch its patience or use the REST endpoint instead.
 
 Domain and batch reports include `source_revision`, DNS/provider observations,
 `score_confidence`, and an explicit `request_budget`. DNS timeouts and provider

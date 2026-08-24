@@ -296,6 +296,7 @@ async function createBatchReport(domains, env, requestBudget = null) {
       limit: REQUEST_SUBREQUEST_LIMIT,
       per_domain_limit: perDomainLimit,
       used: usedSubrequests,
+      remaining: Math.max(0, REQUEST_SUBREQUEST_LIMIT - usedSubrequests),
       exhausted: results.some(row => row.request_budget?.exhausted)
     }
   };
@@ -418,8 +419,11 @@ async function handleRequest(request, env) {
   // generic 404 without its quota or contract. Static asset serving keeps
   // the raw spelling.
   let routePathname = url.pathname;
-  if (routePathname.startsWith('/api') && routePathname.length > 1 && routePathname.endsWith('/')) {
-    routePathname = routePathname.slice(0, -1);
+  if (routePathname.startsWith('/api') && routePathname.length > 1) {
+    // Any run of trailing slashes names the same resource; leaving two in
+    // place sent POST /api/check// to the generic 404 without its 405
+    // contract. Static asset serving keeps the raw spelling.
+    routePathname = routePathname.replace(/\/+$/, '') || routePathname;
   }
   const requestBudget = createRequestBudget(REQUEST_SUBREQUEST_LIMIT, Date.now() + ANALYSIS_WALL_MS);
   requestBudget.sourceRevision = env?.SOURCE_REVISION || 'unknown';

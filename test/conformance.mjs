@@ -87,6 +87,9 @@ async function postResponse(path, body, headers = {}) {
     const slashWrongVerb = await fetch(base + '/api/check/');
     assert.equal(slashWrongVerb.status, 405, 'trailing-slash API paths answer their resource contract');
     assert.equal(slashWrongVerb.headers.get('allow'), 'POST');
+    const doubleSlashWrongVerb = await fetch(base + '/api/check//');
+    assert.equal(doubleSlashWrongVerb.status, 405, 'multi-slash API paths answer their resource contract too');
+    assert.equal(doubleSlashWrongVerb.headers.get('allow'), 'POST');
     const headMalformedReport = await fetch(base + '/api/reports/short', { method: 'HEAD' });
     assert.equal(headMalformedReport.status, 404, 'HEAD report probes share the GET id validation');
 
@@ -229,7 +232,14 @@ async function postResponse(path, body, headers = {}) {
   const client = `conformance-${runToken}-standard`;
   const standardBody = { headers: 'From: sender@example.com\r\n' };
   for (let attempt = 0; attempt < 60; attempt++) {
-    const response = await postResponse('/api/header/analyze', standardBody, { 'CF-Connecting-IP': client });
+    let response = await postResponse('/api/header/analyze', standardBody, { 'CF-Connecting-IP': client });
+    // workerd's simulated limiter binding fails intermittently under load
+    // (observed as a bare 503 on warmup request 8). A 503 is a dependency
+    // outage, not a rate-limit answer, so retry that attempt once.
+    if (response.status === 503) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      response = await postResponse('/api/header/analyze', standardBody, { 'CF-Connecting-IP': client });
+    }
     assert.equal(response.status, 200, `rate-limit warmup request ${attempt + 1}`);
   }
   assert.equal((await fetch(base + '/api/health', { headers: { 'CF-Connecting-IP': client } })).status, 200);

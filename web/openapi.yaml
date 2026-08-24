@@ -55,12 +55,14 @@ paths:
       description: The trailing-slash variant /api/ and the /api/v2 alias answer identically.
       responses:
         '200': { description: Endpoint directory, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '405': { $ref: '#/components/responses/MethodNotAllowed' }
   /api/v2:
     get:
       operationId: getEmailSecurityDirectoryV2
       summary: Alias of the endpoint directory at /api
       responses:
         '200': { description: Endpoint directory, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '405': { $ref: '#/components/responses/MethodNotAllowed' }
   /api/check:
     post:
       operationId: analyzeEmailDomainLegacy
@@ -279,6 +281,15 @@ paths:
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { description: Report storage or usage accounting is temporarily unavailable; the report is not known to be gone }
+    head:
+      operationId: probeEmailSecurityReportExport
+      summary: Probe export availability without a response body
+      parameters:
+        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}$' } }
+      responses:
+        '200': { description: Export would succeed }
+        '404': { description: Report not found or expired }
+        '405': { $ref: '#/components/responses/MethodNotAllowed' }
   /mcp/v2:
     post:
       operationId: invokeEmailSecurityMcp
@@ -298,6 +309,7 @@ paths:
         '200': { description: JSON-RPC response, content: { application/json: { schema: { type: object, required: [jsonrpc], additionalProperties: true } } } }
         '202': { description: Notification accepted }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '406': { description: Accept header must include both MCP response media types }
         '413': { description: MCP request exceeds the 280 KiB limit, answered as a JSON-RPC -32600 error }
         '415': { description: Content-Type must be application/json }
@@ -317,6 +329,7 @@ paths:
         '200': { description: JSON-RPC response, content: { application/json: { schema: { type: object, required: [jsonrpc], additionalProperties: true } } } }
         '202': { description: Notification accepted }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '406': { description: Accept header must include both MCP response media types }
         '413': { description: MCP request exceeds the 280 KiB limit, answered as a JSON-RPC -32600 error }
         '415': { description: Content-Type must be application/json }
@@ -524,14 +537,14 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     RateLimited:
-      description: 'Request limit reached; retry after the interval in the Retry-After header. Caps: 60 standard requests or 10 expensive requests per minute per client (all POST analysis endpoints, builders, and MCP tool calls are expensive), 500 analysis requests per UTC day, and 120 report retrievals per UTC day.'
+      description: 'Request limit reached; retry after the interval in the Retry-After header. Caps: 60 requests per minute for header analysis (standard class) and 10 per minute for every other POST analysis endpoint plus all MCP tool calls (expensive class), 500 analysis requests per UTC day, and 120 report retrievals per UTC day.'
       headers:
         Retry-After: { $ref: '#/components/headers/RetryAfter' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     BodyTooLarge:
-      description: 'The request body exceeds the endpoint limit: 16 KiB of JSON for domain, SPF, builder, and enrichment endpoints; 256 KiB for header analysis and MCP messages.'
+      description: 'The request body exceeds the endpoint limit: 16 KiB of JSON for domain, SPF, builder, and enrichment endpoints; 256 KiB for header analysis; 280 KiB for MCP messages.'
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

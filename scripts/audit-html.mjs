@@ -197,12 +197,30 @@ await Promise.all([
     for (const mcpPath of ['/mcp', '/mcp/v2']) {
       assert.ok(spec.paths[mcpPath].post.responses['429']?.$ref === '#/components/responses/RateLimited',
         `${mcpPath} must document its 429`);
+      assert.ok(spec.paths[mcpPath].post.responses['405']?.$ref === '#/components/responses/MethodNotAllowed',
+        `${mcpPath} must document its wrong-verb 405`);
     }
+    // Wrong verbs on the read-only directory and health paths answer 405 too.
+    for (const getPath of ['/api', '/api/v2']) {
+      assert.ok(spec.paths[getPath].get.responses['405'], `${getPath} must document its wrong-verb 405`);
+    }
+    assert.ok(spec.paths['/api/reports/{reportId}/export'].head,
+      'export must document its HEAD probe');
   }),
 
-  check('MCP connector manifest parses', async () => {
+  check('MCP connector manifest parses and matches the published tool set', async () => {
     const manifest = yaml.load(await (await get('/mcp-copilot.yaml')).text());
     assert.ok(manifest && typeof manifest === 'object', 'mcp-copilot.yaml did not parse');
+    // The manifest defers tool enumeration to tools/list, so drift between
+    // mcp.js and the docs would pass unnoticed; the published list is pinned
+    // here instead. Update this constant when mcp.js gains or loses a tool.
+    const spec = yaml.load(await (await get('/openapi.yaml')).text());
+    const declared = spec['x-ai-usage']?.['mcp-tools'];
+    assert.deepEqual(declared, [
+      'analyze_email_domain', 'analyze_email_headers', 'analyze_email_domains_batch',
+      'inspect_spf', 'evaluate_spf', 'validate_email_record', 'build_email_record',
+      'enrich_email_hops', 'get_email_security_report'
+    ], 'x-ai-usage mcp-tools must match the shipped mcp.js tool set');
   }),
 ]);
 
