@@ -52,7 +52,6 @@ const MTA_STS_POLICY_MAX_BYTES = 16 * 1024;
 // allowing a batch or recursive SPF walk to fail at the platform boundary.
 const REQUEST_SUBREQUEST_LIMIT = 45;
 const RATE_LIMIT_RETRY_AFTER_SECONDS = 60;
-const DAILY_RATE_LIMIT_RETRY_AFTER_SECONDS = 86400;
 const STANDARD_RATE_LIMITER_BINDING = 'STANDARD_RATE_LIMITER';
 const EXPENSIVE_RATE_LIMITER_BINDING = 'EXPENSIVE_RATE_LIMITER';
 // Batch rows share one platform subrequest cap, so each domain only receives
@@ -365,7 +364,9 @@ async function handleRequest(request, env) {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, MCP-Protocol-Version, MCP-Session-Id',
-    'Access-Control-Expose-Headers': 'MCP-Protocol-Version, X-Report-Retention-Days'
+    // Retry-After and Allow are part of the documented 429/405 contract, so
+    // cross-origin browser clients must be allowed to read them.
+    'Access-Control-Expose-Headers': 'MCP-Protocol-Version, X-Report-Retention-Days, Retry-After, Allow'
   };
 
   // MCP paths answer their own preflight with the narrower header contract
@@ -398,13 +399,9 @@ async function handleRequest(request, env) {
 
   if (request.method === 'POST' && (POST_API_PATHS.has(url.pathname) || MCP_PATHS.has(url.pathname))) {
     let retryAfter;
-    try {
-      const dailySuccess = await consumeDailyRateLimit(request, env, 'post', Number(env.DAILY_POST_LIMIT) || 500);
-      if (!dailySuccess) return jsonResponse({ error: 'Daily API request limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(DAILY_RATE_LIMIT_RETRY_AFTER_SECONDS) });
-    } catch {
-      // A D1 outage must not take stateless endpoints down with report
-      // storage; degrade to the per-minute limiter below only.
-    }
+    // The per-minute limiter runs first: every request it rejects must not
+    // also consume a non-renewable daily slot, or one burst of 429s converts
+    // into an all-day lockout for whoever shares the client IP.
     try {
       retryAfter = await consumePostRateLimit(request, url.pathname, env);
     } catch {
@@ -416,6 +413,13 @@ async function handleRequest(request, env) {
         429,
         { ...corsHeaders, 'Retry-After': String(retryAfter) }
       );
+    }
+    try {
+      const dailySuccess = await consumeDailyRateLimit(request, env, 'post', Number(env.DAILY_POST_LIMIT) || 500);
+      if (!dailySuccess) return jsonResponse({ error: 'Daily API request limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(secondsUntilDailyReset()) });
+    } catch {
+      // A D1 outage must not take stateless endpoints down with report
+      // storage; degrade to stateless service.
     }
   }
 
@@ -627,7 +631,7 @@ async function handleRequest(request, env) {
   if (validReportId) {
     try {
       const success = await consumeDailyRateLimit(request, env, 'report', Number(env.REPORT_DAILY_LIMIT) || 120);
-      if (!success) return jsonResponse({ error: 'Daily report retrieval limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(DAILY_RATE_LIMIT_RETRY_AFTER_SECONDS) });
+      if (!success) return jsonResponse({ error: 'Daily report retrieval limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(secondsUntilDailyReset()) });
     } catch {
       // Daily accounting is a quota guard, not the service itself; say what
       // actually happened instead of blaming rate limiting.
@@ -816,6 +820,14 @@ function bodyLimitResponse(error, corsHeaders) {
   return error instanceof RequestBodyTooLargeError
     ? jsonResponse({ error: error.message }, 413, corsHeaders)
     : null;
+}
+
+// Daily counters reset at UTC midnight; a Retry-After that names the real
+// wait is honest near midnight where a flat 86400 overshoots by hours.
+function secondsUntilDailyReset() {
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  return Math.max(1, Math.ceil((next.getTime() - now.getTime()) / 1000));
 }
 
 async function consumePostRateLimit(request, pathname, env) {

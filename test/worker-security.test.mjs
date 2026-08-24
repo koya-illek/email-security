@@ -350,6 +350,28 @@ test("the POST rate-limit gate charges only paths a POST can actually reach", ()
   assert.doesNotMatch(gate, /startsWith\('\/api\/'\)/);
 });
 
+test("per-minute rejections never spend a daily quota slot", () => {
+  // A burst that trips the per-minute limiter must not also burn one of the
+  // caller's few hundred daily requests — otherwise nine minutes of 429s
+  // become an all-day lockout for everyone behind a shared IP.
+  const gate = worker.slice(
+    worker.indexOf("if (request.method === 'POST' && (POST_API_PATHS.has(url.pathname)"),
+    worker.indexOf("if (MCP_PATHS.has(url.pathname))")
+  );
+  const perMinuteAt = gate.indexOf("await consumePostRateLimit(request");
+  const dailyAt = gate.indexOf("await consumeDailyRateLimit(request");
+  assert.ok(perMinuteAt > -1, "the per-minute limiter must guard POST paths");
+  assert.ok(dailyAt > -1, "the daily counter must still guard POST paths");
+  assert.ok(perMinuteAt < dailyAt, "the per-minute limiter must answer before the daily counter is spent");
+});
+
+test("daily-limit Retry-After names the real reset instead of a flat day", () => {
+  assert.doesNotMatch(worker, /DAILY_RATE_LIMIT_RETRY_AFTER_SECONDS/);
+  assert.match(worker, /function secondsUntilDailyReset\(\)/);
+  const uses = worker.match(/'Retry-After': String\(secondsUntilDailyReset\(\)\)/g) || [];
+  assert.ok(uses.length >= 2, "both daily 429 sites (POST and retrieval) must use the honest countdown");
+});
+
 test("unexpected analysis failures answer 500 while dependency outages keep 503", () => {
   // Status policy: an unexpected exception is a server fault (500); 503 is
   // reserved for the named dependency outages (rate limiter, D1 accounting,
