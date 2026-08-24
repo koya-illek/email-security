@@ -284,13 +284,22 @@ async function createBatchReport(domains, env, requestBudget = null) {
   return report;
 }
 
+const SPF_ALL_POLICIES = ['~all', '-all', '?all', '+all', ''];
+
 async function buildEmailRecord(input, budget = null) {
   const type = String(input.type || '').toLowerCase();
   const domain = normalizeDomain(input.domain);
   if (!domain || !isValidDomain(domain)) throw exposedError('A valid domain is required');
   if (type === 'spf') {
     const mechanisms = Array.isArray(input.mechanisms) ? input.mechanisms.map(value => String(value).trim()).filter(Boolean) : [];
-    const policy = ['~all', '-all', '?all', '+all', ''].includes(input.policy) ? input.policy : '~all';
+    // Whitespace is forgiven, but an explicit value the planner does not
+    // know must fail loudly: silently substituting ~all once produced a
+    // publishReady record different from the one the caller asked for.
+    const requestedPolicy = typeof input.policy === 'string' ? input.policy.trim() : input.policy;
+    if (requestedPolicy !== undefined && requestedPolicy !== null && !SPF_ALL_POLICIES.includes(requestedPolicy)) {
+      throw exposedError(`policy must be one of ${SPF_ALL_POLICIES.filter(Boolean).join(', ')}, or an empty string to omit the all mechanism`);
+    }
+    const policy = SPF_ALL_POLICIES.includes(requestedPolicy) ? requestedPolicy : '~all';
     const record = ['v=spf1', ...mechanisms, policy].filter(Boolean).join(' ');
     const validation = await validateSpfRecord(domain, record, budget);
     const safetyWarnings = [];
@@ -299,7 +308,11 @@ async function buildEmailRecord(input, budget = null) {
     return { type, host: domain, record, validation, safetyWarnings, publishReady: validation.valid && !safetyWarnings.length };
   }
   if (type === 'dmarc') {
-    const policy = ['none', 'quarantine', 'reject'].includes(input.policy) ? input.policy : 'none';
+    const requestedPolicy = typeof input.policy === 'string' ? input.policy.trim() : input.policy;
+    if (requestedPolicy !== undefined && requestedPolicy !== null && !DMARC_POLICY_VALUES.includes(requestedPolicy)) {
+      throw exposedError(`policy must be one of ${DMARC_POLICY_VALUES.join(', ')}`);
+    }
+    const policy = DMARC_POLICY_VALUES.includes(requestedPolicy) ? requestedPolicy : 'none';
     const testing = input.testing === 'y' ? 'y' : 'n';
     const parts = ['v=DMARC1', `p=${policy}`, `t=${testing}`];
     if (input.rua) parts.push(`rua=mailto:${String(input.rua).replace(/^mailto:/i, '')}`);

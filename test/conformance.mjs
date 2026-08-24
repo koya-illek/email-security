@@ -82,6 +82,24 @@ async function postResponse(path, body, headers = {}) {
     assert.equal(mcpPreflight.headers.get('access-control-allow-methods'), 'POST, OPTIONS');
     assert.equal((await fetch(base + '/api/check', { method: 'OPTIONS' })).headers.get('access-control-allow-methods'), 'GET, POST, OPTIONS', 'REST keeps the global preflight');
 
+    // A trailing slash names the same resource, so wrong verbs still get the
+    // route's own 405+Allow contract and HEAD probes stay available.
+    const slashWrongVerb = await fetch(base + '/api/check/');
+    assert.equal(slashWrongVerb.status, 405, 'trailing-slash API paths answer their resource contract');
+    assert.equal(slashWrongVerb.headers.get('allow'), 'POST');
+    const headMalformedReport = await fetch(base + '/api/reports/short', { method: 'HEAD' });
+    assert.equal(headMalformedReport.status, 404, 'HEAD report probes share the GET id validation');
+
+    // An explicit but unrecognized builder policy must fail loudly instead
+    // of silently publishing a different record than the caller asked for.
+    const badPolicy = await fetch(base + '/api/v2/record-build', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` },
+      body: JSON.stringify({ type: 'spf', domain: 'example.com', policy: 'strict' })
+    });
+    assert.equal(badPolicy.status, 400, 'unrecognized explicit policy values are rejected');
+    assert.match((await badPolicy.json()).error, /policy must be one of/);
+
   const evaluationCases = [
     ['IPv4 pass', 'v=spf1 ip4:192.0.2.0/24 -all', '192.0.2.44', 'pass'],
     ['IPv4 fail', 'v=spf1 ip4:192.0.2.0/24 -all', '198.51.100.7', 'fail'],

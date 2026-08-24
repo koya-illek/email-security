@@ -358,7 +358,11 @@ components:
         type: { type: string, enum: [spf, dmarc] }
         domain: { type: string, maxLength: 253 }
         mechanisms: { type: array, maxItems: 30, items: { type: string, maxLength: 253 }, description: SPF mechanisms in evaluation order. }
-        policy: { type: string, description: SPF all policy or DMARC enforcement policy. }
+        policy:
+          type: string
+          maxLength: 16
+          pattern: '^(?:~all|-all|\?all|\+all|none|quarantine|reject)?$'
+          description: SPF all policy (~all, -all, ?all, +all, or empty to omit) or DMARC enforcement policy (none, quarantine, reject). An unrecognized explicit value is rejected with 400 instead of silently substituted.
         rolloutStage: { type: string, enum: [testing, confirmed] }
         confirmsNoSenders: { type: boolean }
         testing: { type: string, enum: [y, n] }
@@ -410,7 +414,7 @@ components:
         source_revision: { type: string }
     DomainReport:
       type: object
-      required: [domain, timestamp, spf, dkim, dmarc, mx, caa, ptr, transport, dns, provenance, score_confidence, unknown_controls, request_budget, overall_score, overall_status, share]
+      required: [domain, timestamp, source_revision, spf, dkim, dmarc, mx, caa, ptr, transport, dns, provenance, score_confidence, unknown_controls, request_budget, overall_score, overall_status, share]
       properties:
         domain: { type: string }
         timestamp: { type: string, format: date-time }

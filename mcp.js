@@ -11,7 +11,7 @@ const MCP_SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
   'X-Robots-Tag': 'noindex, nofollow'
 };
 
@@ -74,19 +74,22 @@ async function handleMcp(request, execute) {
 
   if (message.method === 'initialize') {
     const requested = message.params?.protocolVersion || request.headers.get('MCP-Protocol-Version') || MCP_PROTOCOL_VERSION;
-    if (!SUPPORTED_PROTOCOL_VERSIONS.has(requested)) {
-      return rpcError(message.id, -32602, `Unsupported MCP protocol version: ${requested}`);
-    }
+    // Lifecycle spec: a server that does not support the requested version
+    // MUST reply with another version it supports, so a future-versioned
+    // client negotiates down instead of hard-failing against this server.
+    const negotiated = SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : MCP_PROTOCOL_VERSION;
     return rpcResult(message.id, {
-      protocolVersion: requested,
+      protocolVersion: negotiated,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: 'email-security-checker', title: 'Email Security Checker', version: MCP_SERVER_VERSION },
       instructions: 'The tools cover domain and batch posture, SPF inspection and evaluation, guarded SPF or DMARC building and validation, pasted-header analysis and hop enrichment, and stored-report retrieval. Never publish a built record when publishReady is false. Findings are observations and policy guidance, not deliverability guarantees; pasted authentication is receiver-reported rather than cryptographically reverified.',
-    }, requested);
+    }, negotiated);
   }
   const requestVersion = request.headers.get('MCP-Protocol-Version');
   if (requestVersion && !SUPPORTED_PROTOCOL_VERSIONS.has(requestVersion)) {
-    return rpcError(message.id ?? null, -32602, `Unsupported MCP protocol version: ${requestVersion}`);
+    // Versioning spec: an unsupported MCP-Protocol-Version header on later
+    // requests MUST be answered with HTTP 400.
+    return rpcError(message.id ?? null, -32602, `Unsupported MCP protocol version: ${requestVersion}`, 400);
   }
   if (message.method === 'ping') return rpcResult(message.id, {});
   if (message.method === 'tools/list') return rpcResult(message.id, { tools: tools() });
@@ -94,8 +97,10 @@ async function handleMcp(request, execute) {
 
   const params = message.params && typeof message.params === 'object' ? message.params : {};
   const args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
-  if (!tools().some(tool => tool.name === params.name)) {
-    return rpcError(message.id, -32602, 'Unknown tool name');
+  if (!params.name || !tools().some(tool => tool.name === params.name)) {
+    // A missing name and an unrecognized name are the same failure for the
+    // caller, but "undefined" in the error text would be a debugging trap.
+    return rpcError(message.id, -32602, `Unknown tool name: ${String(params.name ?? '(missing)')}`);
   }
   try {
     const result = await execute(params.name, args);
@@ -211,7 +216,7 @@ function tools() {
       inputSchema: { type: 'object', additionalProperties: false, required: ['type', 'domain'], properties: {
         type: { type: 'string', enum: ['spf', 'dmarc'] }, domain: { type: 'string', maxLength: 253 },
         mechanisms: { type: 'array', maxItems: 30, items: { type: 'string', maxLength: 253 }, description: 'SPF mechanisms in evaluation order.' },
-        policy: { type: 'string', description: 'SPF all policy (~all, -all, ?all, +all, or empty) or DMARC policy (none, quarantine, reject).' },
+        policy: { type: 'string', maxLength: 16, pattern: '^(?:~all|-all|\\?all|\\+all|none|quarantine|reject)?$', description: 'SPF all policy (~all, -all, ?all, +all, or empty to omit) or DMARC policy (none, quarantine, reject). An unrecognized explicit value is rejected instead of silently substituted.' },
         rolloutStage: { type: 'string', enum: ['testing', 'confirmed'] }, confirmsNoSenders: { type: 'boolean' },
         testing: { type: 'string', enum: ['y', 'n'] }, rua: { type: 'string', maxLength: 320 },
         subdomainPolicy: { type: 'string', enum: ['none', 'quarantine', 'reject'] }, alignment: { type: 'string', enum: ['relaxed', 'strict'] }, reviewedReports: { type: 'boolean' },

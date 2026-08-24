@@ -58,14 +58,20 @@ test('email MCP accepts id-less notifications and rejects its optional GET strea
   assert.equal(get.headers.get('x-content-type-options'), 'nosniff');
 });
 
-test('email MCP negotiates supported versions and rejects unsupported Accept/version headers', async () => {
+test('email MCP negotiates supported versions, downgrades unknown ones, and rejects unsupported Accept/version headers', async () => {
   const older = await handleMcp(rpcRequest('initialize', { protocolVersion: '2025-06-18' }), async () => ({}));
   assert.equal(older.status, 200);
   assert.equal((await older.json()).result.protocolVersion, '2025-06-18');
 
-  const unsupported = await handleMcp(rpcRequest('initialize', { protocolVersion: '1999-01-01' }), async () => ({}));
-  assert.equal(unsupported.status, 200);
-  assert.equal((await unsupported.json()).error.code, -32602);
+  // Lifecycle spec: a server that does not support the requested version
+  // MUST reply with another version it supports so the client can negotiate
+  // down. Hard-failing with -32602 used to strand future-versioned clients
+  // that would happily have accepted an older revision.
+  const future = await handleMcp(rpcRequest('initialize', { protocolVersion: '2999-01-01' }), async () => ({}));
+  assert.equal(future.status, 200);
+  const futureBody = await future.json();
+  assert.equal(futureBody.result.protocolVersion, '2025-11-25');
+  assert.equal(future.headers.get('MCP-Protocol-Version'), '2025-11-25');
 
   const badAccept = new Request('https://email.illek.ie/mcp/v2', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -79,6 +85,52 @@ test('email MCP negotiates supported versions and rejects unsupported Accept/ver
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })
   });
   assert.equal((await handleMcp(patchType, async () => ({}))).status, 415);
+
+  // An unsupported MCP-Protocol-Version header on later requests MUST be
+  // answered with HTTP 400 per the versioning spec.
+  const staleHeader = new Request('https://email.illek.ie/mcp/v2', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '1999-01-01' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })
+  });
+  const staleResponse = await handleMcp(staleHeader, async () => ({}));
+  assert.equal(staleResponse.status, 400);
+  assert.equal((await staleResponse.json()).error.code, -32602);
+});
+
+test('unknown methods and tools answer distinct JSON-RPC errors', async () => {
+  const unknownMethod = await handleMcp(rpcRequest('resources/list'), async () => ({}));
+  const methodBody = await unknownMethod.json();
+  assert.equal(methodBody.error.code, -32601);
+  assert.match(methodBody.error.message, /resources\/list/);
+
+  const unknownTool = await handleMcp(rpcRequest('tools/call', { name: 'no_such_tool', arguments: {} }), async () => ({}));
+  const toolBody = await unknownTool.json();
+  assert.equal(toolBody.error.code, -32602);
+  assert.match(toolBody.error.message, /Unknown tool name: no_such_tool/);
+
+  // A missing name must not render as the string "undefined".
+  const missingName = await handleMcp(rpcRequest('tools/call', { arguments: {} }), async () => ({}));
+  assert.match((await missingName.json()).error.message, /\(missing\)/);
+
+  // ping stays a plain empty result.
+  const ping = await handleMcp(rpcRequest('ping'), async () => ({}));
+  const pingBody = await ping.json();
+  assert.deepEqual(pingBody.result, {});
+});
+
+test('an unexpected tool fault answers an opaque isError result without engine text', async () => {
+  const response = await handleMcp(rpcRequest('tools/call', {
+    name: 'analyze_email_domain', arguments: { domain: 'example.com' }
+  }), async () => {
+    throw new TypeError('Cannot read properties of undefined (reading map)');
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.result.isError, true);
+  assert.doesNotMatch(body.result.content[0].text, /TypeError|Cannot read properties/);
+  assert.match(body.result.content[0].text, /failed internally \(\w{8}\)/);
+  void body;
 });
 
 test('email MCP separates parse errors from structurally invalid requests', async () => {
