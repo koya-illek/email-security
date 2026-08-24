@@ -10,7 +10,9 @@ const {
   countVisibleSpfLookups,
   hasSpfMacro,
   isDmarcVersionRecord,
-  effectiveDmarcPolicy
+  effectiveDmarcPolicy,
+  isValidSpfDomainSpec,
+  spfTermSyntaxError
 } = require("../policy-tags.js");
 
 test("inherited DMARC records apply sp= instead of the parent's p=", () => {
@@ -70,4 +72,39 @@ test("sender-macro targets are detected for every legal macro expression", () =>
   assert.ok(hasSpfMacro("redirect=%{l}._spf.example.com"));
   assert.ok(!hasSpfMacro("include:_spf.esp.com"));
   assert.ok(!hasSpfMacro("redirect=_spf.example.com"));
+});
+
+test("qualified modifiers are syntax errors, never live redirect targets", () => {
+  // RFC 7208 §6: modifiers are name=value and cannot carry a qualifier.
+  // "+redirect=" used to be stripped into a live redirect the engine
+  // followed, reporting a policy the record never expressed.
+  assert.match(spfTermSyntaxError("+redirect=_r.example"), /qualifier cannot precede/);
+  assert.equal(spfTermSyntaxError("redirect=_r.example"), null);
+  assert.equal(spfTermSyntaxError("exp=explain.example.com"), null);
+  assert.equal(spfTermSyntaxError("+include:_spf.example.com"), null, "mechanisms may carry qualifiers");
+});
+
+test("terms matching no RFC 7208 production are named instead of silently ignored", () => {
+  assert.match(spfTermSyntaxError("foo:bar"), /matches no RFC 7208/);
+  // "v=spf2" is a legal UNKNOWN modifier receivers ignore (RFC 7208 §6),
+  // not a syntax error — the validator warns and retains it.
+  assert.equal(spfTermSyntaxError("v=spf2"), null);
+  for (const term of ["all", "-all", "ip4:192.0.2.0/24", "ip6:2001:db8::/32", "a", "a/24", "a:example.com//64", "mx:example.com", "ptr", "ptr:example.com", "include:_spf.example.com", "exists:%{ir}.example.com"]) {
+    assert.equal(spfTermSyntaxError(term), null, term);
+  }
+});
+
+test("the domain-spec validator enforces the RFC 7208 §7 macro grammar", () => {
+  for (const spec of ["_spf.example.com", "%{ir}.%{v}._spf.%{d2}.example.com", "%{l}.%{o}.example.com", "%{d}._spf.example", "smtp.%{i}.example.com"]) {
+    assert.ok(isValidSpfDomainSpec(spec), spec);
+  }
+  // k is not a macro letter; bare % and %x are not macro escapes.
+  for (const spec of ["%foo.example.com", "%{k}.example.com", "%{s%.example.com", "bad..example.com"]) {
+    assert.equal(isValidSpfDomainSpec(spec), false, spec);
+  }
+});
+
+test("qualified redirects consume no evaluation lookup", () => {
+  assert.equal(countVisibleSpfLookups(["+redirect=_x.example"]), 0);
+  assert.equal(countVisibleSpfLookups(["redirect=_x.example"]), 1);
 });

@@ -22,6 +22,8 @@ function spfTerminalTerm(term) {
 function countVisibleSpfLookups(mechanisms) {
   // RFC 7208 §6.1: redirect is ignored when an all mechanism is present, so
   // it consumes no evaluation lookup and must not count toward the limit.
+  // A QUALIFIED modifier ("+redirect=") matches no production at all —
+  // receivers permerror before evaluating — so it consumes no lookup either.
   const hasAll = mechanisms.some(part => stripSpfQualifier(part) === 'all');
   return mechanisms.reduce((count, part) => {
     const clean = stripSpfQualifier(part);
@@ -36,7 +38,7 @@ function countVisibleSpfLookups(mechanisms) {
       clean.startsWith('ptr:') ||
       clean.startsWith('include:') ||
       clean.startsWith('exists:') ||
-      (clean.startsWith('redirect=') && !hasAll)
+      (clean.startsWith('redirect=') && !hasAll && !/^[+?~-]/.test(part))
     ) {
       return count + 1;
     }
@@ -49,6 +51,82 @@ function countVisibleSpfLookups(mechanisms) {
 // produce false void-lookup verdicts.
 function hasSpfMacro(value) {
   return /%\{[^}]*\}/.test(String(value || ''));
+}
+
+// RFC 7208 §7 macro-expression: macro-letter, optional decimal transformers,
+// optional "r", and optional delimiters. c/r/t exist only inside exp=
+// explanation text (§7.3), never in a domain-spec.
+function isValidSpfMacroExpression(expression, allowExplanationLetters) {
+  const match = String(expression || '').match(/^([a-z])(\d*)(r?)([.\-+,/_=]*)$/i);
+  if (!match) return false;
+  const [, letter, digits, , ] = match;
+  const letters = allowExplanationLetters ? 'slodipvhcrt' : 'slodipvh';
+  return letters.includes(letter.toLowerCase()) && digits.length <= 10;
+}
+
+// RFC 7208 §7: a domain-spec is plain visible characters, the escapes %% %_
+// %-, or well-formed macro expressions. The previous character-class check
+// admitted "%foo" and "%{k}" (k is not a macro letter) that receivers
+// permerror.
+function isValidSpfDomainSpec(value) {
+  const source = String(value || '');
+  if (!source || /\s/.test(source)) return false;
+  let index = 0;
+  while (index < source.length) {
+    if (source[index] !== '%') {
+      index += 1;
+      continue;
+    }
+    const next = source[index + 1];
+    if (next === '%' || next === '_' || next === '-') {
+      index += 2;
+      continue;
+    }
+    if (next === '{') {
+      const close = source.indexOf('}', index + 2);
+      if (close === -1) return false;
+      if (!isValidSpfMacroExpression(source.slice(index + 2, close), false)) return false;
+      index = close + 1;
+      continue;
+    }
+    return false;
+  }
+  if (source.includes('%')) return true;
+  // Label-wise plain domain: consecutive dots ("bad..example.com") are as
+  // unacceptable here as they are everywhere else a domain enters this tool.
+  if (source.length > 254) return false;
+  return /^(?:[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?)(?:\.(?:[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?))*\.?$/i.test(source);
+}
+
+// Modifier shape per RFC 7208 §6: name=value. A qualifier may only precede a
+// mechanism — "+redirect=_x.example" matches no production, so receivers
+// permerror the whole record instead of following the target.
+function isSpfModifierShape(lowercasedTerm) {
+  return /^[a-z][a-z0-9_.-]*=/.test(String(lowercasedTerm || ''));
+}
+
+// Grammar gate for one SPF term. Returns null when the term's shape is one
+// receivers accept (value-level checks such as CIDR ranges stay with the
+// callers), or a short reason they would reject it. Mirrors the validator's
+// term table: all/ip4/ip6/include/a/mx/ptr/exists mechanisms plus
+// unqualified name=value modifiers.
+function spfTermSyntaxError(term) {
+  const raw = String(term || '');
+  if (!raw) return 'an empty term';
+  const qualifier = /^[+?~-]/.test(raw) ? raw[0] : '';
+  const body = qualifier ? raw.slice(1) : raw;
+  const clean = body.toLowerCase();
+  if (!clean) return 'a lone qualifier';
+  if (isSpfModifierShape(clean)) {
+    return qualifier
+      ? `the ${qualifier} qualifier cannot precede the modifier "${body}" (RFC 7208 §6)`
+      : null;
+  }
+  const mechanismShape = /^(?:(?:ip4:[0-9./]+)|(?:ip6:[0-9a-f:.]+(?:\/\d{1,3})?)|(?:include:\S+)|(?:exists:\S+)|(?:a(?::[^\s/]+)?(?:\/\d{1,3})?(?:\/\/\d{1,3})?)|(?:mx(?::[^\s/]+)?(?:\/\d{1,3})?(?:\/\/\d{1,3})?)|(?:ptr(?::\S+)?)|(?:all))$/;
+  // NOTE: every alternative must live inside the single anchored group —
+  // "^a|b$" would anchor only the first and last branches.
+  if (!mechanismShape.test(clean)) return `"${raw}" matches no RFC 7208 mechanism or modifier`;
+  return null;
 }
 
 // RFC 9989: when discovery finds the record at an ancestor policy
@@ -83,5 +161,9 @@ module.exports = {
   spfTerminalTerm,
   countVisibleSpfLookups,
   hasSpfMacro,
+  isValidSpfMacroExpression,
+  isValidSpfDomainSpec,
+  isSpfModifierShape,
+  spfTermSyntaxError,
   effectiveDmarcPolicy
 };

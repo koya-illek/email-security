@@ -35,6 +35,9 @@ const {
   hasSpfMacro,
   isDmarcVersionRecord,
   parseTagRecord,
+  isValidSpfDomainSpec,
+  isSpfModifierShape,
+  spfTermSyntaxError,
   DMARC_POLICY_VALUES,
   effectiveDmarcPolicy
 } = require('./policy-tags');
@@ -1025,6 +1028,11 @@ async function validateSpfRecord(domain, value, budget = null) {
       warnings.push('The ptr mechanism is valid but discouraged and should be replaced.');
       return;
     }
+    // RFC 7208 §6: modifiers are name=value and never carry a qualifier.
+    if (/^[+?~-]/.test(token) && isSpfModifierShape(clean)) {
+      errors.push(`The ${token[0]} qualifier cannot precede a modifier: ${token}`);
+      return;
+    }
     if (clean.startsWith('redirect=') || clean.startsWith('exp=')) {
       if (!isValidSpfDomainSpec(clean.slice(clean.indexOf('=') + 1))) errors.push(`Invalid SPF modifier: ${token}`);
       return;
@@ -1191,12 +1199,6 @@ function isValidIpv6Cidr(value) {
   } catch {
     return false;
   }
-}
-
-function isValidSpfDomainSpec(value) {
-  if (!value || /\s/.test(value)) return false;
-  if (value.includes('%')) return /^[a-z0-9_.%{}+/_=-]+$/i.test(value);
-  return /^(?=.{1,253}\.?$)[a-z0-9_](?:[a-z0-9_.-]*[a-z0-9_])?\.?$/i.test(value);
 }
 
 function isValidDmarcReportUri(value) {
@@ -1695,10 +1697,19 @@ async function analyzeSPF(domain, records, budget = null) {
   const checks = [];
   const mechanisms = [];
   const providers = new Set();
+  // Terms that match no RFC 7208 production make receivers permerror the
+  // whole record (§4.6) — they must fail the analysis, not vanish silently
+  // while the rest of the record scores a pass.
+  const invalidTerms = [];
 
   // Parse mechanisms
   const parts = parseSpfRecord(record).tokens;
   for (const part of parts.slice(1)) {
+    const syntaxReason = spfTermSyntaxError(part);
+    if (syntaxReason !== null) {
+      invalidTerms.push(`${part} (${syntaxReason})`);
+      continue;
+    }
     const clean = stripSpfQualifier(part);
     if (clean.startsWith('ip4:') || clean.startsWith('ip6:')) {
       mechanisms.push({ type: 'ip', value: clean });
@@ -1725,6 +1736,14 @@ async function analyzeSPF(domain, records, budget = null) {
 
   // Check all mechanism
   const terminal = parts.map(spfTerminalTerm).find(Boolean);
+  if (invalidTerms.length) {
+    checks.push({
+      status: 'fail',
+      title: 'Terms receivers reject as syntax errors',
+      detail: `${invalidTerms.join('; ')}. Receivers answer permerror for the whole record, so no term in it takes effect (RFC 7208 §4.6).`,
+      recommendation: 'Fix or remove the flagged terms before publishing.'
+    });
+  }
   if (terminal === '-all') {
     checks.push({
       status: 'pass',
@@ -1925,8 +1944,14 @@ async function countSpfDnsLookupsRecursive(domain, record, seen = new Set(), dep
   let redirect = null;
   tokens.forEach(token => {
     const clean = stripSpfQualifier(token);
-    if (clean.startsWith('include:')) includes.push(clean.slice(8));
-    if (clean.startsWith('redirect=')) redirect = clean.slice(9);
+    // A qualified modifier ("+redirect=_x.example") matches no RFC 7208
+    // production: receivers permerror instead of following it, so this walk
+    // must not follow it either.
+    if (!isSpfModifierShape(clean)) {
+      if (clean.startsWith('include:')) includes.push(clean.slice(8));
+      return;
+    }
+    if (!/^[+?~-]/.test(token) && clean.startsWith('redirect=')) redirect = clean.slice(9);
   });
 
   for (const includeDomain of includes) {
