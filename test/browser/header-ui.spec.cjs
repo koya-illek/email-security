@@ -954,3 +954,36 @@ test('a batch-row click during an active domain check queues instead of dropping
   await expect(page.locator('#domain-input')).toHaveValue('fast.example');
   await expect.poll(() => requests).toEqual(['slow.example', 'fast.example']);
 });
+
+test('receiver TLS evidence renders per hop and in the findings', async ({ page }) => {
+  await page.goto('/#headers');
+  await page.getByLabel('Complete message headers').fill([
+    'From: Example Billing <billing@example.com>',
+    'Authentication-Results: mx.receiver.example; spf=pass smtp.mailfrom=bounce@mail.example.com; dkim=pass header.d=mail.example.com; dmarc=pass header.from=example.com',
+    'Received: from sender.example (sender.example [8.8.8.8])',
+    ' by mx.receiver.example with ESMTPS id abc123',
+    ' (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384); Thu, 23 Jul 2026 20:00:00 +0100'
+  ].join('\r\n'));
+  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+
+  const receivedSection = page.locator('#header-results details').filter({ hasText: 'Received Chain' });
+  await receivedSection.locator(':scope > summary').click();
+  await expect(page.locator('.hop-tls')).toContainText('TLS: TLS 1.3 · TLS_AES_256_GCM_SHA384');
+  await expect(page.locator('#header-results')).toContainText('Every recorded hop shows TLS');
+});
+
+test('a forwarded message with an ARC chain surfaces the archived pass', async ({ page }) => {
+  await page.goto('/#headers');
+  await page.getByLabel('Complete message headers').fill([
+    'From: Example Billing <billing@example.com>',
+    'ARC-Authentication-Results: i=1; mx.origin.example; spf=pass smtp.mailfrom=bounce@origin.example; dkim=pass header.d=origin.example; dmarc=pass header.from=origin.example',
+    'ARC-Message-Signature: i=1; a=rsa-sha256; d=origin.example; s=sel; b=AAA',
+    'ARC-Seal: i=1; a=rsa-sha256; d=origin.example; s=sel; t=1; b=BBB',
+    'Authentication-Results: mx.final.example; spf=softfail smtp.mailfrom=bounce@list.example; dkim=none; dmarc=fail header.from=example.com',
+    'Received: from list.example ([192.0.2.10]) by mx.final.example with ESMTPS id z; Thu, 23 Jul 2026 20:00:00 +0100'
+  ].join('\r\n'));
+  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+
+  await expect(page.locator('#header-results')).toContainText('ARC chain of 1 instance(s) recorded');
+  await expect(page.locator('#header-results')).toContainText('ARC preserves an earlier pass');
+});

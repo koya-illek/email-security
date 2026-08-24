@@ -854,6 +854,8 @@ textarea:focus-visible {
   color: var(--muted);
   font-size: 12px;
 }
+.hop-tls { font: 500 11px/1.4 var(--mono); color: var(--muted); }
+.hop-tls.cleartext { color: var(--critical); }
 
 /* Principles section */
 .principles { padding: 90px 0 110px; border-top: 1px solid var(--line); }

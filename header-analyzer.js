@@ -160,8 +160,14 @@ function parseAuthResults(value) {
   // authserv-id; strip leading comments so the identity is the first token.
   const parts = String(value || '').split(';');
   const authservId = stripLeadingComments(parts.shift()).trim().split(/\s+/)[0] || 'unknown';
+  return { authservId, methods: authMethodsFromClauses(parts) };
+}
+
+// Shared clause reader for Authentication-Results and the ARC variant:
+// "spf=pass smtp.mailfrom=…; dkim=pass header.d=…" per semicolon clause.
+function authMethodsFromClauses(clauses) {
   const methods = [];
-  for (const clause of parts) {
+  for (const clause of clauses) {
     const match = clause.match(/\b(spf|dkim|dmarc)\s*=\s*([a-z]+)/i);
     if (!match) continue;
     const method = match[1].toLowerCase();
@@ -176,7 +182,7 @@ function parseAuthResults(value) {
       reason: (clause.match(/\breason\s*=\s*"([^"]+)"/i) || [])[1] || ''
     });
   }
-  return { authservId, methods };
+  return methods;
 }
 
 function parseReceivedSpf(value) {
@@ -286,6 +292,44 @@ function extractIpCandidates(value) {
     });
 }
 
+// RFC 3848 transport tokens name whether STARTTLS ran on the connection:
+// an S suffix means TLS, a bare or A-only token does not. Absence of any
+// token is unknown, never evidence either way.
+const TLS_TRANSPORT_TOKENS = new Set(['ESMTPS', 'ESMTPSA', 'LMTPS', 'LMTPSA', 'ASYNCMTPS', 'ASYNCMTPSA']);
+const CLEARTEXT_TRANSPORT_TOKENS = new Set(['SMTP', 'ESMTP', 'ESMTPA', 'LMTP', 'LMTPA', 'ASYNCMTP', 'ASYNCMTPA']);
+
+function classifyTransportToken(token) {
+  const upper = String(token || '').trim().toUpperCase();
+  if (TLS_TRANSPORT_TOKENS.has(upper)) return 'tls';
+  if (CLEARTEXT_TRANSPORT_TOKENS.has(upper)) return 'cleartext';
+  return 'unknown';
+}
+
+// Receivers log TLS detail inside Received comments ("(version=TLS1_3
+// cipher=TLS_AES_256_GCM_SHA384)", "(using TLSv1.2 with cipher
+// ECDHE-RSA-AES256-SHA384)"), which visibleHeaderText strips — so this
+// reads the raw value. Everything found is receiver-reported evidence,
+// never an independent observation.
+function extractTlsEvidence(rawText) {
+  const text = String(rawText || '');
+  const versionMatch = text.match(/\bversion\s*=\s*(TLSv?\s?1\.[0-3]|TLS1_[0-3]|SSLv3)\b/i)
+    || text.match(/\busing\s+(TLSv?1\.[0-3]|SSLv3)\b/i);
+  const cipherMatch = text.match(/\bcipher[=:]\s*([a-z0-9][a-z0-9_-]{2,60})/i)
+    || text.match(/\bwith\s+cipher\s+([a-z0-9][a-z0-9_-]{2,60})\s*(?:[),;]|$)/i);
+  const normalizeVersion = value => {
+    const compact = String(value || '').toUpperCase().replace(/\s+/g, '');
+    const tls = compact.match(/^(?:TLSV?)?([0-9])[._]([0-9])$/);
+    if (tls) return `TLS ${tls[1]}.${tls[2]}`;
+    const ssl = compact.match(/^SSLV?([0-9])$/);
+    if (ssl) return `SSL ${ssl[1]}.0`;
+    return compact;
+  };
+  const version = versionMatch ? normalizeVersion(versionMatch[1]) : null;
+  const cipher = cipherMatch ? cipherMatch[1].toUpperCase() : null;
+  if (!version && !cipher) return null;
+  return { ...(version ? { version } : {}), ...(cipher ? { cipher } : {}) };
+}
+
 function parseReceived(value, index, total) {
   const text = String(value || '');
   // Keyword extraction must ignore RFC 5322 comments — "(note by
@@ -300,6 +344,7 @@ function parseReceived(value, index, total) {
   // a comment no longer derails the split.
   const dateText = visible.includes(';') ? visible.slice(visible.lastIndexOf(';') + 1).trim() : '';
   const parsedDate = dateText && !Number.isNaN(Date.parse(dateText)) ? new Date(dateText).toISOString() : null;
+  const tls = extractTlsEvidence(text);
   return {
     index: index + 1,
     position: index === 0 ? 'Final receiving hop' : index === total - 1 ? 'Earliest recorded hop' : 'Intermediate hop',
@@ -310,8 +355,56 @@ function parseReceived(value, index, total) {
     date: dateText,
     parsedDate,
     value: text,
-    ips: extractIpCandidates(text)
+    ips: extractIpCandidates(text),
+    transportClass: classifyTransportToken(protocol),
+    ...(tls ? { tls } : {})
   };
+}
+
+// ARC (RFC 8617) preserves earlier authentication across forwarding hops in
+// three per-instance header sets. Without verifying seals — which needs the
+// full message body — the honest assessment is shape-level: instance counts,
+// numbering consistency, and what the archived results claim.
+function buildArcSummary(headers) {
+  const aarHeaders = headers['arc-authentication-results'] || [];
+  const amsHeaders = headers['arc-message-signature'] || [];
+  const sealHeaders = headers['arc-seal'] || [];
+  if (!aarHeaders.length && !amsHeaders.length && !sealHeaders.length) return null;
+
+  const instancesOf = values => values.map(value => {
+    const match = String(value).match(/(?:^|;)\s*i\s*=\s*(\d+)/i);
+    return match ? Number(match[1]) : 0;
+  });
+
+  const aarInstances = instancesOf(aarHeaders);
+  const amsInstances = instancesOf(amsHeaders);
+  const sealInstances = instancesOf(sealHeaders);
+
+  // The newest archived results are the ones closest to delivery.
+  const newestIndex = aarInstances.reduce((best, value, i) => (value > aarInstances[best] ? i : best), 0);
+  let newestClaims = [];
+  if (aarHeaders.length) {
+    const parts = String(aarHeaders[newestIndex] || '').split(';');
+    newestClaims = authMethodsFromClauses(parts.slice(1));
+  }
+
+  return {
+    present: true,
+    counts: { authenticationResults: aarHeaders.length, messageSignature: amsHeaders.length, seal: sealHeaders.length },
+    instances: { authenticationResults: aarInstances, messageSignature: amsInstances, seal: sealInstances },
+    newestClaims
+  };
+}
+
+function arcChainIsConsistent(summary) {
+  const { counts, instances } = summary;
+  const sizes = [counts.authenticationResults, counts.messageSignature, counts.seal];
+  if (new Set(sizes).size !== 1) return false;
+  const expected = Array.from({ length: counts.seal }, (_, i) => i + 1);
+  for (const list of [instances.authenticationResults, instances.messageSignature, instances.seal]) {
+    if ([...list].sort((a, b) => a - b).join(',') !== expected.join(',')) return false;
+  }
+  return true;
 }
 
 function analyzeEmailHeaders(raw) {
@@ -411,6 +504,49 @@ function analyzeEmailHeaders(raw) {
     });
   }
 
+  // RFC 8617: forwarding and mailing lists routinely break SPF/DKIM while
+  // ARC preserves what the original sender proved. Shape-level evidence
+  // only — seals are not verified here.
+  const arc = buildArcSummary(headers);
+  if (arc) {
+    if (arcChainIsConsistent(arc)) {
+      const claims = arc.newestClaims
+        .map(item => `${item.method}=${item.result}`)
+        .join(', ');
+      checks.push({
+        status: 'info',
+        title: `ARC chain of ${arc.counts.seal} instance(s) recorded`,
+        detail: `Instance numbering is consistent across all three ARC header types.${claims ? ` Newest archived results (${arc.counts.authenticationResults ? 'i=' + Math.max(...arc.instances.authenticationResults) : 'latest'}): ${claims}.` : ''}`,
+        recommendation: 'ARC records what intermediate handlers observed; receivers decide how much to trust it.'
+      });
+      // The classic mailing-list story: the topmost report shows failure
+      // because a list server modified the message, while the archived
+      // chain preserves the author's original pass.
+      const preserved = [];
+      for (const method of ['dmarc', 'dkim', 'spf']) {
+        const claim = arc.newestClaims.find(item => item.method === method && item.result === 'pass');
+        const currentResult = method === 'spf' ? spf : method === 'dkim' ? dkim : dmarc;
+        if (claim && (!currentResult || currentResult.result !== 'pass')) preserved.push(method.toUpperCase());
+      }
+      if (preserved.length) {
+        checks.push({
+          status: 'info',
+          title: `ARC preserves an earlier pass for ${preserved.join(' and ')}`,
+          detail: `The topmost Authentication-Results does not show pass for ${preserved.join(', ')}, but the newest archived ARC results do — consistent with legitimate forwarding or list handling after the original authentication.`,
+          recommendation: 'Weigh the archived chain alongside why the current hop reports differently before judging the sender.'
+        });
+      }
+    } else {
+      const { counts, instances } = arc;
+      checks.push({
+        status: 'warn',
+        title: 'ARC chain is inconsistent',
+        detail: `Found ${counts.authenticationResults} ARC-Authentication-Results, ${counts.messageSignature} ARC-Message-Signature(s), and ${arc.counts.seal} ARC-Seal(s); instance numbers observed: [${[...instances.authenticationResults, ...instances.messageSignature, ...instances.seal].sort((a, b) => a - b).join(', ') || 'none'}].`,
+        recommendation: 'A broken chain cannot extend trust to earlier hops. Treat its claims as unverifiable rather than as passes.'
+      });
+    }
+  }
+
   if (!fromDomain) {
     checks.push({
       status: 'fail',
@@ -508,6 +644,53 @@ function analyzeEmailHeaders(raw) {
         recommendation: 'Clock skew is possible, but inspect the affected Received headers and other inconsistencies before trusting the delivery chain.'
       });
     }
+
+    // Transport encryption evidence across the chain: receiver-reported
+    // protocol tokens and TLS detail from comments. Absence of a comment is
+    // not absence of TLS, so only positive claims produce checks.
+    const cleartextHops = hops.filter(hop => hop.transportClass === 'cleartext');
+    const tlsHops = hops.filter(hop => hop.tls);
+    const tokenOnlyTls = hops.filter(hop => !hop.tls && hop.transportClass === 'tls');
+    const anyTlsEvidence = tlsHops.length > 0 || tokenOnlyTls.length > 0;
+    const evidenced = tlsHops.length + tokenOnlyTls.length;
+    if (cleartextHops.length) {
+      // Some MTAs log a bare "ESMTP" even over TLS, so one such token next
+      // to TLS claims elsewhere reads as mixed evidence, not as a finding.
+      const decisive = !anyTlsEvidence;
+      const named = cleartextHops.map(hop => `hop ${hop.index} (${hop.protocol})`).join(', ');
+      checks.push({
+        status: decisive ? 'warn' : 'info',
+        title: decisive
+          ? 'Cleartext delivery recorded'
+          : 'Mixed transport tokens across the chain',
+        detail: decisive
+          ? `${named} used a protocol token without STARTTLS on that connection.`
+          : `${named} carried no STARTTLS marker while ${evidenced} of ${hops.length} hops report TLS. Some servers log bare protocol names regardless.`,
+        recommendation: decisive
+          ? 'Message content crossed part of its path unencrypted. Check whether the sending or receiving side can require TLS.'
+          : ''
+      });
+    }
+    if (tlsHops.length || tokenOnlyTls.length) {
+      const versions = [...new Set(tlsHops.flatMap(hop => hop.tls.version ? [hop.tls.version] : []))];
+      const covered = evidenced === hops.length;
+      checks.push({
+        status: covered ? 'pass' : 'info',
+        title: covered
+          ? 'Every recorded hop shows TLS'
+          : `TLS recorded on ${evidenced} of ${hops.length} hops`,
+        detail: [
+          versions.length ? `Receiver-reported versions: ${versions.join(', ')}.` : 'Protocol tokens indicate STARTTLS, but no version or cipher was logged.',
+          covered ? '' : 'Hops without a comment or a decisive token carry no claim either way.'
+        ].filter(Boolean).join(' '),
+        recommendation: ''
+      });
+      // Surface ciphers alongside versions for the strongest single claim.
+      const ciphers = [...new Set(tlsHops.flatMap(hop => hop.tls.cipher ? [hop.tls.cipher] : []))];
+      if (ciphers.length === 1 && versions.length) {
+        checks[checks.length - 1].detail += ` Cipher: ${ciphers[0]}.`;
+      }
+    }
   }
   const passCount = [spf, dkim, dmarc].filter(item => item?.result === 'pass').length;
   const failCount = [spf, dkim, dmarc].filter(item => ['fail', 'softfail', 'permerror', 'policy'].includes(item?.result)).length;
@@ -550,7 +733,8 @@ function analyzeEmailHeaders(raw) {
     evidence: {
       authenticationResults: authHeaders,
       receivedSpf: receivedSpfHeaders.map(parseReceivedSpf),
-      dkimSignatures: dkimSignatureHeaders.map(parseDkimSignature)
+      dkimSignatures: dkimSignatureHeaders.map(parseDkimSignature),
+      ...(arc ? { arc } : {})
     },
     limits: { maxHeaderBytes: MAX_HEADER_BYTES, maxEnrichedIps: 10 }
   };

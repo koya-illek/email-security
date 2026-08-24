@@ -1318,15 +1318,29 @@
       .join("");
 
     const route = `<div class="hop-route"><code>${esc(h.from || "unknown source")}</code><span class="muted">→</span><code>${esc(h.by || "unknown receiver")}</code></div>`;
-    const meta = [h.protocol && "Protocol: " + h.protocol, h.id && "ID: " + h.id, h.date && "Time: " + h.date]
+    // Receiver-reported transport evidence: the protocol token's class plus
+    // any TLS version/cipher logged in the Received comment.
+    let transportNote = "";
+    if (h.transportClass === "cleartext") {
+      transportNote = `<span class="hop-tls cleartext">no STARTTLS recorded</span>`;
+    } else if (h.tls) {
+      const parts = [h.tls.version, h.tls.cipher].filter(Boolean);
+      if (parts.length) transportNote = `<span class="hop-tls">TLS: ${esc(parts.join(" · "))}</span>`;
+    }
+    const meta = [
+      h.protocol && "Protocol: " + h.protocol,
+      h.id && "ID: " + h.id,
+      h.date && "Time: " + h.date
+    ]
       .filter(Boolean)
       .map((x) => `<span>${esc(x)}</span>`)
       .join("");
+    const metaHtml = `${meta}${transportNote}`;
 
     return `<div class="hop-item">
       <strong>Hop ${esc(h.index)} · ${esc(h.position)}</strong>
       ${route}
-      <div class="hop-meta">${meta}</div>
+      <div class="hop-meta">${metaHtml}</div>
       ${addresses ? `<div class="hop-addresses">${addresses}</div>` : ""}
       <details class="hop-raw"><summary class="muted">Raw Received header</summary><div class="muted hop-raw-value">${esc(h.value)}</div></details>
     </div>`;
