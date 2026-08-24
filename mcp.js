@@ -169,9 +169,13 @@ function tools() {
         type: 'object',
         required: ['summary', 'checks', 'hops', 'ips', 'enrichment', 'limits'],
         properties: {
-          summary: { type: 'object', required: ['status', 'verdict', 'confidence'], properties: {
-            status: { type: 'string', enum: ['pass', 'warn', 'fail', 'info'] },
+          summary: { type: 'object', required: ['status', 'verdict', 'confidence', 'passCount', 'spf', 'dkim', 'dmarc'], properties: {
+            // The summary status is never 'info': a paste without receiver
+            // reports always carries the no-report warning.
+            status: { type: 'string', enum: ['pass', 'warn', 'fail'] },
             verdict: { type: 'string' }, confidence: { type: 'string' },
+            passCount: { type: 'integer', minimum: 0, maximum: 3 },
+            spf: { type: 'string' }, dkim: { type: 'string' }, dmarc: { type: 'string' },
           } },
           checks: { type: 'array', items: { type: 'object' } },
           hops: { type: 'array', items: { type: 'object' } },
@@ -199,7 +203,7 @@ function tools() {
     {
       name: 'evaluate_spf', title: 'Evaluate SPF for a sender',
       description: 'Evaluate an SPF policy for a client IP, envelope sender, and HELO using RFC processing and bounded DNS lookup limits. An optional record evaluates a proposed policy without publishing it.',
-      inputSchema: { type: 'object', additionalProperties: false, required: ['ip'], properties: { ip: { type: 'string' }, sender: { type: 'string', maxLength: 320 }, helo: { type: 'string', maxLength: 253 }, domain: { type: 'string', maxLength: 253 }, record: { type: 'string', maxLength: 4096 } }, anyOf: [{ required: ['domain'] }, { required: ['sender'] }] },
+      inputSchema: { type: 'object', additionalProperties: false, required: ['ip'], properties: { ip: { type: 'string', maxLength: 45, description: 'Public IPv4 or IPv6 address of the connecting sender.' }, sender: { type: 'string', maxLength: 320 }, helo: { type: 'string', maxLength: 253 }, domain: { type: 'string', maxLength: 253 }, record: { type: 'string', maxLength: 4096 } }, anyOf: [{ required: ['domain'] }, { required: ['sender'] }] },
       outputSchema: { type: 'object', required: ['status', 'lookups', 'request_budget'], properties: { status: { type: 'object' }, lookups: { type: 'object' }, request_budget: { type: 'object' } } },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -230,7 +234,7 @@ function tools() {
     {
       name: 'enrich_email_hops', title: 'Enrich public email delivery-hop IPs',
       description: 'Enrich up to 10 public IP addresses observed in received headers with bounded reverse-DNS and network registration evidence.',
-      inputSchema: { type: 'object', additionalProperties: false, required: ['ips'], properties: { ips: { type: 'array', minItems: 1, maxItems: 10, uniqueItems: true, items: { type: 'string' } } } },
+      inputSchema: { type: 'object', additionalProperties: false, required: ['ips'], properties: { ips: { type: 'array', minItems: 1, maxItems: 10, uniqueItems: true, items: { type: 'string', maxLength: 45 } } } },
       outputSchema: { type: 'object', required: ['enriched', 'limit', 'request_budget'], properties: { enriched: { type: 'array', items: { type: 'object' } }, limit: { type: 'integer', enum: [10] }, request_budget: { type: 'object' } } },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },

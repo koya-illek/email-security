@@ -256,7 +256,7 @@ async function postResponse(path, body, headers = {}) {
   const expensiveClient = `conformance-${runToken}-expensive`;
   for (const [path, body, expectedStatus] of [
     ['/api/check', {}, 400],
-    ['/api/header/enrich', { ips: [] }, 200],
+    ['/api/header/enrich', { ips: [] }, 400],
     ['/api/spf/inspect', { domain: '' }, 400],
     ['/api/spf/evaluate', { domain: '', ip: '' }, 400]
   ]) {

@@ -345,3 +345,93 @@ describe('ARC chain evidence', () => {
     assert.equal(result.evidence.arc, undefined);
   });
 });
+
+describe('DKIM-Signature shape', () => {
+  it('rejects duplicate tag names the way RFC 6376 §3.2 verifiers must', () => {
+    const result = analyzeEmailHeaders([
+      'From: Example Billing <billing@example.com>',
+      'DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=s1; b=AAA; bh=ZZZ=; b=TAMPERED'
+    ].join('\r\n'));
+    const review = result.checks.find(check => check.title === 'DKIM-Signature syntax needs review');
+    assert.ok(review, 'a repeated b= tag invalidates the signature shape');
+    assert.match(review.detail, /repeat a tag name/);
+  });
+
+  it('notes an l= body-length truncation without claiming verification', () => {
+    const result = analyzeEmailHeaders([
+      'From: Example Billing <billing@example.com>',
+      'DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=s1; b=AAA; bh=ZZZ=; l=100',
+      'Subject: Invoice'
+    ].join('\r\n'));
+    const note = result.checks.find(check => check.title.includes('l='));
+    assert.ok(note, 'an l= tag deserves an explicit finding');
+    assert.equal(note.status, 'info');
+    assert.match(note.detail, /never signed/);
+  });
+});
+
+describe('TLS comment formats', () => {
+  it('reads Exim-style X=TLS1.3:cipher comments for both version and cipher', () => {
+    const result = analyzeEmailHeaders([
+      'From: Example Billing <billing@example.com>',
+      'Received: from outbound.example.net ([8.8.8.8])',
+      ' by mx.receiver.example with ESMTPS id abc',
+      ' (X=TLS1.3:RSA_AES_256_GCM_SHA384); Thu, 23 Jul 2026 20:00:00 +0100'
+    ].join('\r\n'));
+    assert.deepEqual(result.hops[0].tls, { version: 'TLS 1.3', cipher: 'RSA_AES_256_GCM_SHA384' });
+  });
+
+  it('accepts a colon after the version keyword, not only equals', () => {
+    const result = analyzeEmailHeaders([
+      'From: Example Billing <billing@example.com>',
+      'Received: from outbound.example.net ([8.8.8.8]) by mx.receiver.example',
+      ' (version:TLS1.2 cipher:ECDHE_RSA_AES_128); Thu, 23 Jul 2026 20:00:00 +0100'
+    ].join('\r\n'));
+    assert.equal(result.hops[0].tls.version, 'TLS 1.2');
+  });
+});
+
+describe('Date header versus delivery chain', () => {
+  const hopAt = iso => [
+    'From: Example Billing <billing@example.com>',
+    `Date: ${iso}`,
+    'Received: from outbound.example.net ([8.8.8.8]) by mx.receiver.example;',
+    ' Mon, 27 Jul 2026 12:00:00 +0000'
+  ].join('\r\n');
+
+  it('warns when the message claims to be written days after delivery', () => {
+    const result = analyzeEmailHeaders(hopAt('Mon, 31 Jul 2026 12:00:00 +0000'));
+    const skew = result.checks.find(check => check.title === 'Message date disagrees with the delivery chain');
+    assert.ok(skew, 'a four-days-later Date is a spoofing tell');
+    assert.equal(skew.status, 'warn');
+    assert.match(skew.detail, /newer than every recorded hop/);
+  });
+
+  it('warns when the message predates its own delivery chain by days', () => {
+    const result = analyzeEmailHeaders(hopAt('Wed, 01 Jul 2026 12:00:00 +0000'));
+    const skew = result.checks.find(check => check.title === 'Message date disagrees with the delivery chain');
+    assert.ok(skew);
+    assert.match(skew.detail, /older than every recorded hop/);
+  });
+
+  it('stays silent within a day of the hop timestamps', () => {
+    const result = analyzeEmailHeaders(hopAt('Mon, 27 Jul 2026 11:00:00 +0000'));
+    assert.ok(!result.checks.some(check => check.title === 'Message date disagrees with the delivery chain'));
+  });
+
+  it('stays silent when either timestamp is absent or unparsable', () => {
+    const noDate = analyzeEmailHeaders([
+      'From: Example Billing <billing@example.com>',
+      'Received: from outbound.example.net ([8.8.8.8]) by mx.receiver.example;',
+      ' Mon, 27 Jul 2026 12:00:00 +0000'
+    ].join('\r\n'));
+    const undatedHops = analyzeEmailHeaders([
+      'From: Example Billing <billing@example.com>',
+      'Date: Mon, 31 Jul 2026 12:00:00 +0000',
+      'Received: from outbound.example.net ([8.8.8.8]) by mx.receiver.example;'
+    ].join('\r\n'));
+    const title = 'Message date disagrees with the delivery chain';
+    assert.ok(!noDate.checks.some(check => check.title === title));
+    assert.ok(!undatedHops.checks.some(check => check.title === title));
+  });
+});

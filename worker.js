@@ -542,9 +542,10 @@ async function handleRequest(request, env) {
       if (tool === 'enrich_email_hops') {
         // Same contract as POST /api/header/enrich and the tool's own
         // uniqueItems schema: reject rather than silently dedupe, so agents
-        // see one behavior across both surfaces.
-        if (!Array.isArray(args.ips) || args.ips.length > 10 || args.ips.some(ip => typeof ip !== 'string' || !isPublicIpAddress(ip))) {
-          throw exposedError('ips must contain up to 10 unique public IPv4 or IPv6 addresses');
+        // see one behavior across both surfaces. Empty arrays are refused
+        // for the same reason the REST twin refuses them.
+        if (!Array.isArray(args.ips) || args.ips.length < 1 || args.ips.length > 10 || args.ips.some(ip => typeof ip !== 'string' || !isPublicIpAddress(ip))) {
+          throw exposedError('ips must contain 1 to 10 unique public IPv4 or IPv6 addresses');
         }
         const cleanIps = [...new Set(args.ips)];
         if (cleanIps.length !== args.ips.length) throw exposedError('ips must not contain duplicates');
@@ -601,8 +602,10 @@ async function handleRequest(request, env) {
   if (routePathname === '/api/header/enrich' && request.method === 'POST') {
     try {
       const { ips } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
-      if (!Array.isArray(ips) || ips.length > 10 || ips.some(ip => typeof ip !== 'string' || !isPublicIpAddress(ip))) {
-        throw new InvalidRequestError('ips must contain up to 10 unique public IPv4 or IPv6 addresses');
+      // minItems: 1 is published in both OpenAPI and the MCP schema; an
+      // empty array would spend expensive-limiter quota enriching nothing.
+      if (!Array.isArray(ips) || ips.length < 1 || ips.length > 10 || ips.some(ip => typeof ip !== 'string' || !isPublicIpAddress(ip))) {
+        throw new InvalidRequestError('ips must contain 1 to 10 unique public IPv4 or IPv6 addresses');
       }
       const cleanIps = [...new Set(ips)];
       if (cleanIps.length !== ips.length) throw new InvalidRequestError('ips must not contain duplicates');

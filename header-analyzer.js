@@ -194,12 +194,21 @@ function parseReceivedSpf(value) {
 
 function parseDkimSignature(value) {
   const raw = String(value || '').trim();
+  // RFC 6376 §3.2: a tag name occurring more than once invalidates the
+  // whole tag-list. Last-wins silently blessed signatures receivers must
+  // refuse — the same duplicate discipline the DMARC validator applies.
+  const seen = new Set();
+  let duplicate = false;
   const tags = Object.fromEntries(raw.split(';').map(part => {
     const index = part.indexOf('=');
-    return index > 0 ? [part.slice(0, index).trim().toLowerCase(), part.slice(index + 1).trim()] : null;
+    if (index <= 0) return null;
+    const key = part.slice(0, index).trim().toLowerCase();
+    if (seen.has(key)) { duplicate = true; return null; }
+    seen.add(key);
+    return [key, part.slice(index + 1).trim()];
   }).filter(Boolean));
   const required = ['v', 'a', 'd', 's', 'bh', 'b'];
-  const validSyntax = required.every(key => Boolean(tags[key])) && /^1$/.test(tags.v);
+  const validSyntax = !duplicate && required.every(key => Boolean(tags[key])) && /^1$/.test(tags.v);
   return { raw, tags, validSyntax };
 }
 
@@ -305,17 +314,21 @@ function classifyTransportToken(token) {
   return 'unknown';
 }
 
-// Receivers log TLS detail inside Received comments ("(version=TLS1_3
-// cipher=TLS_AES_256_GCM_SHA384)", "(using TLSv1.2 with cipher
-// ECDHE-RSA-AES256-SHA384)"), which visibleHeaderText strips — so this
-// reads the raw value. Everything found is receiver-reported evidence,
-// never an independent observation.
+// Receivers log TLS detail inside Received comments in three shapes:
+// Postfix ("(version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384)"), Exchange
+// ("(using TLSv1.2 with cipher ECDHE-RSA-AES256-SHA384)"), and Exim
+// ("X=TLS1.3:RSA_AES_256_GCM_SHA384"), which visibleHeaderText strips — so
+// this reads the raw value. The version/value separator also varies (= vs :),
+// so both spellings are accepted. Everything found is receiver-reported
+// evidence, never an independent observation.
 function extractTlsEvidence(rawText) {
   const text = String(rawText || '');
-  const versionMatch = text.match(/\bversion\s*=\s*(TLSv?\s?1\.[0-3]|TLS1_[0-3]|SSLv3)\b/i)
-    || text.match(/\busing\s+(TLSv?1\.[0-3]|SSLv3)\b/i);
+  const versionMatch = text.match(/\bversion[=:]\s*(TLSv?\s?1\.[0-3]|TLS1_[0-3]|SSLv3)\b/i)
+    || text.match(/\busing\s+(TLSv?1\.[0-3]|SSLv3)\b/i)
+    || text.match(/\bX\s*=\s*(TLSv?1\.[0-3])\b/i);
   const cipherMatch = text.match(/\bcipher[=:]\s*([a-z0-9][a-z0-9_-]{2,60})/i)
-    || text.match(/\bwith\s+cipher\s+([a-z0-9][a-z0-9_-]{2,60})\s*(?:[),;]|$)/i);
+    || text.match(/\bwith\s+cipher\s+([a-z0-9][a-z0-9_-]{2,60})\s*(?:[),;]|$)/i)
+    || text.match(/\bX\s*=\s*(?:TLSv?\s?1\.[0-3]):([a-z0-9][a-z0-9_-]{2,60})/i);
   const normalizeVersion = value => {
     const compact = String(value || '').toUpperCase().replace(/\s+/g, '');
     const tls = compact.match(/^(?:TLSV?)?([0-9])[._]([0-9])$/);
@@ -480,10 +493,22 @@ function analyzeEmailHeaders(raw) {
       status: malformed.length ? 'warn' : 'info',
       title: malformed.length ? 'DKIM-Signature syntax needs review' : 'DKIM-Signature fields found',
       detail: malformed.length
-        ? `${malformed.length} DKIM-Signature field(s) are missing one or more required tags.`
+        ? `${malformed.length} DKIM-Signature field(s) are missing one or more required tags or repeat a tag name.`
         : `${parsedSignatures.length} DKIM-Signature field(s) include version, algorithm, signing domain, selector, body hash, and signature tags.`,
       recommendation: 'This checks header shape only. It does not verify the signature, DNS key, or message body hash.'
     });
+    // RFC 6376 §3.7: l= limits verification to a prefix of the body, so any
+    // content appended after that prefix goes unverified — a classic way to
+    // smuggle extra content past receivers that still honor the tag.
+    const truncated = parsedSignatures.filter(item => /^\d+$/.test(item.tags.l || '') && Number(item.tags.l) > 0);
+    if (truncated.length) {
+      checks.push({
+        status: 'info',
+        title: 'Signature covers only part of the body (l=)',
+        detail: `${truncated.length} DKIM-Signature field(s) carry an l= body-length tag, so content beyond the covered prefix was never signed.`,
+        recommendation: 'Content added after the signed prefix is not protected by this signature; judge the message on its full visible content.'
+      });
+    }
   }
 
   if (authHeaders.length > 1) {
@@ -644,6 +669,31 @@ function analyzeEmailHeaders(raw) {
       });
     }
 
+    // The RFC 5322 Date header versus the delivery chain is one of the
+    // cheapest spoofing tells there is: a message claiming to be written
+    // days after (or years before) any receiver touched it deserves a
+    // second look. Both bounds allow a full day for legitimate clock skew
+    // between the authoring and receiving systems.
+    const messageDateMs = Date.parse(first('date'));
+    if (Number.isFinite(messageDateMs) && datedHops.length) {
+      const newestHopMs = Date.parse(datedHops[0].parsedDate);
+      const oldestHopMs = Date.parse(datedHops[datedHops.length - 1].parsedDate);
+      const DAY_MS = 24 * 60 * 60 * 1000;
+      const skewed = messageDateMs > newestHopMs + DAY_MS
+        ? 'newer than every recorded hop'
+        : messageDateMs < oldestHopMs - DAY_MS
+          ? 'older than every recorded hop'
+          : null;
+      if (skewed) {
+        checks.push({
+          status: 'warn',
+          title: 'Message date disagrees with the delivery chain',
+          detail: `The Date header is ${skewed}. Senders and receivers do drift, but a gap beyond a day is also how reused or fabricated messages present.`,
+          recommendation: 'Compare the Date header with the hop timestamps below and treat large disagreements as one signal among several, not as proof on its own.'
+        });
+      }
+    }
+
     // Transport encryption evidence across the chain: receiver-reported
     // protocol tokens and TLS detail from comments. Absence of a comment is
     // not absence of TLS, so only positive claims produce checks.
@@ -696,7 +746,10 @@ function analyzeEmailHeaders(raw) {
   const headerFailure = checks.some(check => check.status === 'fail');
   const hasFailure = failCount || headerFailure;
   const hasWarning = checks.some(check => check.status === 'warn');
-  const status = hasFailure ? 'fail' : hasWarning ? 'warn' : passCount === 3 ? 'pass' : authHeaders.length ? 'warn' : 'info';
+  // The no-receiver-report check is itself a warning when authHeaders is
+  // empty, so an incomplete-but-quiet paste always carries that warn — the
+  // former `authHeaders.length ? 'warn' : 'info'` arm was unreachable.
+  const status = hasFailure ? 'fail' : hasWarning ? 'warn' : passCount === 3 ? 'pass' : 'warn';
 
   return {
     summary: {

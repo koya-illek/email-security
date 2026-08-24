@@ -150,7 +150,7 @@ test("the DKIM key estimator reads exact RSA modulus bits from the DER SPKI", as
 
 test("API contract rejects null and wrong-type JSON payloads", () => {
   assert.match(worker, /Request body must be a JSON object/);
-  assert.match(worker, /ips must contain up to 10 unique public/);
+  assert.match(worker, /ips must contain 1 to 10 unique public/);
   assert.match(worker, /A batch may contain at most/);
   assert.match(worker, /validation, request_budget/);
 });
@@ -203,8 +203,8 @@ test("DMARC honours sp= for inherited records instead of scoring by the parent's
   const tags = await readFile(new URL("../policy-tags.js", import.meta.url), "utf8");
   const helper = tags.slice(tags.indexOf("function effectiveDmarcPolicy(tags, inherited)"), tags.indexOf("module.exports"));
   assert.ok(helper.length > 0, "effectiveDmarcPolicy must exist");
-  assert.match(helper, /inherited && DMARC_POLICY_VALUES\.includes\(tags\.sp\)\) return tags\.sp;/);
-  assert.match(helper, /return tags\.p \|\| null;/);
+  assert.match(helper, /inherited && DMARC_POLICY_VALUES\.includes\(sp\)\) return sp;/);
+  assert.match(helper, /return String\(tags\.p \|\| ''\)\.toLowerCase\(\) \|\| null;/);
   assert.match(worker, /require\('\.\/policy-tags'\)/);
   const analyze = worker.slice(worker.indexOf("function analyzeDMARC(records, discovery"), worker.indexOf("function parseMailtoList("));
   assert.match(analyze, /= effectiveDmarcPolicy\(tags, inheritedRecord\)/);
@@ -538,6 +538,6 @@ test("the MCP enrich tool enforces the same unique-public-IP contract as REST", 
   // reject rather than silently dedupe, matching POST /api/header/enrich.
   const branch = worker.slice(worker.indexOf("'enrich_email_hops'"), worker.indexOf("'get_email_security_report'"));
   assert.ok(branch.length > 0, "MCP enrich branch must exist");
-  assert.match(branch, /ips\.length > 10 \|\| args\.ips\.some\(ip => typeof ip !== 'string' \|\| !isPublicIpAddress\(ip\)\)/);
+  assert.match(branch, /args\.ips\.length < 1 \|\| args\.ips\.length > 10 \|\| args\.ips\.some\(ip => typeof ip !== 'string' \|\| !isPublicIpAddress\(ip\)\)/);
   assert.match(branch, /ips must not contain duplicates/);
 });

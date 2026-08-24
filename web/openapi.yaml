@@ -184,7 +184,7 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/SpfEvaluationRequest' }, example: { ip: 192.0.2.1, sender: postmaster@example.com, helo: example.com } } }
       responses:
-        '200': { description: RFC SPF evaluation result, content: { application/json: { schema: { type: object, required: [status, request_budget], additionalProperties: true, properties: { request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
+        '200': { description: RFC SPF evaluation result, content: { application/json: { schema: { type: object, required: [status, lookups, request_budget], additionalProperties: true, properties: { request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
@@ -228,7 +228,7 @@ paths:
       summary: Enrich up to 10 public delivery-hop IP addresses
       requestBody:
         required: true
-        content: { application/json: { schema: { type: object, additionalProperties: false, required: [ips], properties: { ips: { type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: { type: string } } } }, example: { ips: [8.8.8.8] } } }
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [ips], properties: { ips: { type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: { type: string, maxLength: 45 } } } }, example: { ips: [8.8.8.8] } } }
       responses:
         '200': { description: Bounded PTR and registration enrichment, content: { application/json: { schema: { type: object, required: [enriched, limit, request_budget], properties: { enriched: { type: array, items: { type: object, additionalProperties: true } }, limit: { type: integer, enum: [10] }, request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -284,11 +284,14 @@ paths:
     head:
       operationId: probeEmailSecurityReportExport
       summary: Probe export availability without a response body
+      description: Shares the GET contract, including quota accounting; the runtime strips the body.
       parameters:
         - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}$' } }
       responses:
         '200': { description: Export would succeed }
         '404': { description: Report not found or expired }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { description: Report storage or usage accounting is temporarily unavailable; the report is not known to be gone }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
   /mcp/v2:
     post:
@@ -495,7 +498,7 @@ components:
       type: object
       required: [status, verdict, confidence, passCount, spf, dkim, dmarc]
       properties:
-        status: { type: string, enum: [pass, warn, fail, info] }
+        status: { type: string, enum: [pass, warn, fail], description: Never info — a paste without receiver reports carries the no-report warning. }
         verdict: { type: string }
         confidence: { type: string }
         passCount: { type: integer, minimum: 0, maximum: 3 }
