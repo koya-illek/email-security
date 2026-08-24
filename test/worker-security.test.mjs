@@ -443,6 +443,24 @@ test("a trailing slash on a routed API path answers the resource's own contract"
   assert.match(handler, /!url\.pathname\.startsWith\('\/api\/'\)/);
 });
 
+test("a shared wall-clock deadline converts degraded-DNS marathons into timeouts", () => {
+  // The subrequest budget caps count, not duration; sequential DNS phases
+  // over failing resolvers could stretch one request toward minutes. Every
+  // budget must carry a deadline and queryDNS must honor it before spending
+  // an attempt.
+  assert.match(worker, /const ANALYSIS_WALL_MS = 20000;/);
+  const budget = worker.slice(worker.indexOf("function createRequestBudget("), worker.indexOf("async function createDomainReport("));
+  assert.match(budget, /outOfTime\(\) \{\s*return this\.deadline !== null && Date\.now\(\) >= this\.deadline;\s*\}/s);
+  const query = worker.slice(worker.indexOf("async function queryDNS("), worker.indexOf("function dnsState("));
+  const timeAt = query.indexOf("if (requestBudget.outOfTime())");
+  const reserveAt = query.indexOf("if (!requestBudget.reserve('dns'))");
+  assert.ok(timeAt > -1 && reserveAt > -1, "queryDNS must check both budgets");
+  assert.ok(timeAt < reserveAt, "the deadline is checked before any attempt is spent");
+  // Batch rows inherit the shared deadline instead of minting their own.
+  const batchRow = worker.slice(worker.indexOf("const domainBudget = createRequestBudget(perDomainLimit"), worker.indexOf("try {"));
+  assert.match(batchRow, /requestBudget\?\.deadline \?\? Date\.now\(\) \+ ANALYSIS_WALL_MS/);
+});
+
 test("unexpected analysis failures answer 500 while dependency outages keep 503", () => {
   // Status policy: an unexpected exception is a server fault (500); 503 is
   // reserved for the named dependency outages (rate limiter, D1 accounting,

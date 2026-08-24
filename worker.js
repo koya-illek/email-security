@@ -44,6 +44,11 @@ const POLICY_CACHE_TTL = 86400; // 24 hour cache for policy HTTP fetches
 // authorisation evidence and RFC 9989 version-token handling.
 const CACHE_VERSION = 'v11-dmarc-reporting';
 const DNS_TIMEOUT_MS = 4500;
+// Wall-clock ceiling for one analysis: sequential phases over slow or
+// failing resolvers must degrade to inconclusive evidence instead of
+// stretching the request toward minutes while technically inside the
+// subrequest-count budget.
+const ANALYSIS_WALL_MS = 20000;
 const NORMAL_JSON_BODY_MAX_BYTES = 16 * 1024;
 const HEADER_JSON_BODY_MAX_BYTES = 256 * 1024;
 const MTA_STS_POLICY_MAX_BYTES = 16 * 1024;
@@ -131,11 +136,19 @@ const API_SECURITY_HEADERS = {
 
 // Common DKIM selectors to check
 
-function createRequestBudget(limit = REQUEST_SUBREQUEST_LIMIT) {
+function createRequestBudget(limit = REQUEST_SUBREQUEST_LIMIT, deadline = null) {
   return {
     limit,
     used: 0,
     exhausted: false,
+    deadline,
+    // The subrequest budget caps how many DNS calls run, not for how long;
+    // on a degraded-DNS day the retry ladder could otherwise stretch one
+    // request toward minutes. Once past the deadline, remaining work is
+    // converted to honest timeout states by queryDNS.
+    outOfTime() {
+      return this.deadline !== null && Date.now() >= this.deadline;
+    },
     reserve(kind = 'dns') {
       if (this.used >= this.limit) {
         this.exhausted = true;
@@ -150,7 +163,7 @@ function createRequestBudget(limit = REQUEST_SUBREQUEST_LIMIT) {
   };
 }
 
-async function createDomainReport(domain, env, budget = createRequestBudget()) {
+async function createDomainReport(domain, env, budget = createRequestBudget(REQUEST_SUBREQUEST_LIMIT, Date.now() + ANALYSIS_WALL_MS)) {
   const cacheKey = new Request(`https://cache.internal/${CACHE_VERSION}/${domain}`);
   const cache = caches.default;
   let analysis;
@@ -222,7 +235,7 @@ async function createBatchReport(domains, env, requestBudget = null) {
   // At most 3 domains run, so one parallel wave covers every row; each still
   // draws only from its own slice of the shared platform budget.
   const results = await Promise.all(uniqueDomains.map(async domain => {
-    const domainBudget = createRequestBudget(perDomainLimit);
+    const domainBudget = createRequestBudget(perDomainLimit, requestBudget?.deadline ?? Date.now() + ANALYSIS_WALL_MS);
     try {
       const report = await analyzeDomain(domain, domainBudget);
       return {
@@ -373,7 +386,7 @@ async function handleRequest(request, env) {
   if (routePathname.startsWith('/api') && routePathname.length > 1 && routePathname.endsWith('/')) {
     routePathname = routePathname.slice(0, -1);
   }
-  const requestBudget = createRequestBudget();
+  const requestBudget = createRequestBudget(REQUEST_SUBREQUEST_LIMIT, Date.now() + ANALYSIS_WALL_MS);
   requestBudget.sourceRevision = env?.SOURCE_REVISION || 'unknown';
   const securityHeaders = {
     'Content-Security-Policy': "default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self'; connect-src 'self' https://cloudflareinsights.com; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
@@ -1259,7 +1272,7 @@ async function enrichIp(ip, budget = null) {
   return result;
 }
 
-async function analyzeDomain(domain, budget = createRequestBudget()) {
+async function analyzeDomain(domain, budget = createRequestBudget(REQUEST_SUBREQUEST_LIMIT, Date.now() + ANALYSIS_WALL_MS)) {
   // Run all DNS queries in parallel
   const [
     spfRecords,
@@ -1422,9 +1435,18 @@ async function discoverDmarcPolicy(domain, budget = null) {
 }
 
 async function queryDNS(name, type, budget = null) {
-  const requestBudget = budget || createRequestBudget();
+  const requestBudget = budget || createRequestBudget(REQUEST_SUBREQUEST_LIMIT, Date.now() + ANALYSIS_WALL_MS);
   let last = { status: 'error', rcode: null, provider: null, error: 'No DNS provider responded' };
   for (const provider of DOH_PROVIDERS) {
+    if (requestBudget.outOfTime()) {
+      last = {
+        status: 'timeout',
+        rcode: null,
+        provider: null,
+        error: `The analysis time budget was exceeded before ${name} ${type} could be resolved`
+      };
+      break;
+    }
     if (!requestBudget.reserve('dns')) {
       last = { status: 'budget_exceeded', rcode: null, provider: null, error: `Request DNS subrequest budget of ${requestBudget.limit} was exhausted` };
       break;
