@@ -270,15 +270,21 @@
   });
 
   // ─── Load shared report from D1 ───────────────────────────────
-  // A second link opened while one is loading must win; the loser's panels
-  // and render are abandoned when its sequence number is stale.
+  // A second link opened while one is loading must win: content rendering
+  // bails when a newer load superseded it globally, while each panel's
+  // spinner is owned by the newest load targeting that panel so a domain
+  // load abandoned by a batch load cannot leave its spinner behind.
   let sharedReportSequence = 0;
+  const sharedPanelSequence = { domain: 0, batch: 0 };
   async function loadSharedReport(reportId, options = {}) {
     const sequence = ++sharedReportSequence;
     const stale = () => sequence !== sharedReportSequence;
     // The #batch- prefix is a hint for which panel owns failures and the
     // loading spinner; success always dispatches on the stored _reportType.
     const preferBatch = options.prefer === "batch";
+    const panelKey = preferBatch ? "batch" : "domain";
+    sharedPanelSequence[panelKey] = sequence;
+    const ownsPanel = () => sharedPanelSequence[panelKey] === sequence;
     const loadingPanel = preferBatch ? batchLoading : domainLoading;
     const errorPanel = preferBatch ? batchError : domainError;
     const reportPanel = preferBatch ? batchReport : domainReport;
@@ -315,7 +321,9 @@
         selectTool("domain", false);
       }
     } finally {
-      if (!stale()) loadingPanel.classList.add("hidden");
+      // Hide only while still the newest load of this panel: a same-panel
+      // successor manages the spinner from here, and no other panel can.
+      if (ownsPanel()) loadingPanel.classList.add("hidden");
     }
   }
 
@@ -389,8 +397,9 @@
   // holds. Without this, a click during an active check silently dropped the
   // new request and the stale answer rendered beneath the new domain.
   $("#inspect-from-report")?.addEventListener("click", async () => {
-    if (!lastDomainReport) return;
-    const domain = lastDomainReport.domain;
+    const reportDomain = lastDomainReport?.domain;
+    if (typeof reportDomain !== "string" || !reportDomain) return;
+    const domain = reportDomain;
     spfInput.value = domain;
     spfInspectGeneration.next();
     selectTool("spf");
@@ -1359,7 +1368,7 @@
     const status = $("#batch-count-status");
     if (!status) return;
     if (over && !batchOverLimitAnnounced) {
-      status.textContent = `${extra} line${extra === 1 ? "" : "s"} exceed the ${BATCH_MAX_DOMAINS_UI}-domain limit and will be rejected.`;
+      status.textContent = `${extra} line${extra === 1 ? "" : "s"} ${extra === 1 ? "exceeds" : "exceed"} the ${BATCH_MAX_DOMAINS_UI}-domain limit and will be rejected.`;
       batchOverLimitAnnounced = true;
     } else if (!over) {
       status.textContent = "";
