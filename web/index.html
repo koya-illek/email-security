@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Audit SPF, DKIM, DMARC, MX, and transport security across single domains or in batch. Inspect SPF lookup trees, build safer records, and parse message headers with shareable reports that show their working.">
-  <meta name="theme-color" content="#07100e">
+  <meta name="theme-color" content="#0b0b16">
   <meta property="og:title" content="Email Security Analyzer">
   <meta property="og:description" content="Audit SPF, DKIM, DMARC, MX, and transport security. Batch domain checks, SPF inspection, record building, header analysis, and shareable reports.">
   <meta property="og:type" content="website">
@@ -91,7 +91,7 @@
       <div class="error-panel hidden" id="domain-error" role="alert">
         <span class="error-code">CHECK_FAILED</span>
         <div>
-          <h2>The domain could not be analysed</h2>
+          <h2>The domain could not be analyzed</h2>
           <p id="domain-error-msg"></p>
         </div>
       </div>
@@ -133,7 +133,7 @@
           <textarea id="batch-input" placeholder="example.com&#10;anotherdomain.org&#10;thirddomain.net" rows="8" autocapitalize="none" autocorrect="off" spellcheck="false"></textarea>
         </div>
         <div class="form-meta">
-          <span>SPF, DKIM, DMARC, MX, Transport compared</span>
+          <span>SPF, DKIM, DMARC, MX, transport compared</span>
           <span>Equal DNS budget per domain</span>
           <span id="batch-count">0 / 3 domains</span>
           <span class="sr-only" role="status" id="batch-count-status"></span>
@@ -239,7 +239,7 @@
           </div>
           <div class="field full">
             <fieldset class="provider-fieldset">
-              <legend>Authorised email services</legend>
+              <legend>Authorized email services</legend>
               <div class="provider-grid" id="provider-options">
                 <label class="provider-option"><input type="checkbox" value="include:spf.protection.outlook.com"> Microsoft 365</label>
                 <label class="provider-option"><input type="checkbox" value="include:_spf.google.com"> Google Workspace</label>
@@ -407,7 +407,7 @@
     <p>Independent email security diagnostics. Results are guidance, not proof of deliverability.</p>
     <p>© 2026 Illek. All rights reserved. <a href="https://tools.illek.ie/privacy">Privacy</a></p>
     <a class="text-button" href="./openapi.yaml">Developer API</a>
-    <button class="text-button" id="footer-method-button" type="button">How measurements work</button>
+    <button class="text-button" id="footer-method-button" type="button">Methodology</button>
   </footer>
 
     <dialog id="method-dialog" aria-labelledby="method-dialog-title">

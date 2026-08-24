@@ -503,16 +503,28 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 .check-item:last-child { border-bottom: none; }
+/* Status is encoded twice on purpose: the colored badge AND its glyph, so
+   deutan/protan users and forced-colors mode can tell pass from fail
+   (WCAG 1.4.1). Same pattern the batch table uses with Pass/Fail text. */
 .check-dot {
-  width: 8px; height: 8px;
+  width: 18px; height: 18px;
   border-radius: 50%;
-  margin-top: 7px;
+  margin-top: 0;
   flex-shrink: 0;
   background: var(--info);
+  color: #06110d;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 11px/1 var(--mono);
 }
 .check-item.pass .check-dot { background: var(--accent); }
 .check-item.warn .check-dot { background: var(--warning); }
 .check-item.fail .check-dot { background: var(--critical); }
+.check-item.pass .check-dot::before { content: "✓"; }
+.check-item.warn .check-dot::before { content: "!"; }
+.check-item.fail .check-dot::before { content: "✕"; }
+.check-item.info .check-dot::before { content: "i"; }
 .check-content { flex: 1; }
 .check-title { font-weight: 600; margin-bottom: 4px; font-size: 14px; }
 .check-detail { color: var(--muted); font-size: 13px; line-height: 1.55; margin-bottom: 8px; }
@@ -657,6 +669,7 @@ textarea:focus-visible {
   color: var(--accent);
   font: 500 12px/1 var(--mono);
   margin-bottom: 5px;
+  overflow-wrap: anywhere;
 }
 .source-group span {
   font: 12px/1.5 var(--mono);
@@ -856,6 +869,11 @@ textarea:focus-visible {
 }
 .hop-tls { font: 500 11px/1.4 var(--mono); color: var(--muted); }
 .hop-tls.cleartext { color: var(--critical); }
+/* Unbreakable mono tokens: with overflow-x clipped at the body, a long
+   hostname or message-ID silently vanished off-screen on narrow phones. */
+.hop-route code,
+.hop-meta span,
+.mx-table td code { overflow-wrap: anywhere; }
 
 /* Principles section */
 .principles { padding: 90px 0 110px; border-top: 1px solid var(--line); }
@@ -1091,6 +1109,10 @@ dialog h2 { margin: 0 0 30px; font-size: 32px; letter-spacing: -.04em; }
   footer { padding: 24px 0; align-items: start; flex-direction: column; }
   .batch-table { font-size: 12px; }
   .batch-table th, .batch-table td { padding: 10px 10px; }
+  /* The sort button's negative margins must track the cell padding: at the
+     desktop -14/-16 values against 10px cells the hit areas of neighboring
+     columns overlapped by ~12px and boundary taps sorted the wrong column. */
+  .sort-button { padding: 10px 10px; margin: -10px -10px; }
   #batch-input { min-height: 140px; font-size: 13px; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1104,12 +1126,17 @@ dialog h2 { margin: 0 0 30px; font-size: 32px; letter-spacing: -.04em; }
 @media print {
   /* The product is dark-on-light inverted; browsers strip backgrounds when
      printing, which used to leave white text on white paper. Force a light
-     scheme and remove screen-only chrome so reports survive Ctrl+P/PDF. */
+     scheme and remove screen-only chrome so reports survive Ctrl+P/PDF.
+     Surface tokens remap too: recommendation blocks sit on --surface-2 and
+     capability cards on --surface, which stayed near-black and printed
+     #111 text at ~1:1 contrast with "Background graphics" enabled. */
   :root {
     --bg: #fff;
     --text: #111;
     --muted: #444;
     --line: #bbb;
+    --surface: #fff;
+    --surface-2: #fff;
   }
   body {
     background: #fff !important;

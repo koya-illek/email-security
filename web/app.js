@@ -532,7 +532,7 @@
 
   function checkItem(x) {
     return `<div class="check-item ${safeStatusClass(x.status)}">
-      <div class="check-dot"></div>
+      <div class="check-dot" aria-hidden="true"></div>
       <div class="check-content">
         <div class="check-title">${esc(x.title)}</div>
         <div class="check-detail">${esc(x.detail)}</div>
@@ -814,10 +814,16 @@
       return;
     }
 
+    // Validation payloads are network answers: a drifted count renders as
+    // unavailable, never as "undefined SPF DNS lookups".
+    const lookups = asCount(validation.lookupCount);
+    const characters = asCount(validation.characterCount);
+    const characterText = characters === null ? "character count unavailable" : `${characters} characters`;
+    const lookupText = lookups === null ? "lookup count unavailable" : `${lookups} SPF DNS lookups`;
     const metrics =
       type === "spf"
-        ? ` · ${validation.lookupCount} SPF DNS lookups · ${validation.characterCount} characters`
-        : ` · ${validation.characterCount} characters`;
+        ? ` · ${lookupText} · ${characterText}`
+        : ` · ${characterText}`;
 
     box.innerHTML = `<div class="notice good"><strong>Valid record</strong>${metrics}${warnings.length ? "<br>" + warnings.map(esc).join("<br>") : ""}</div>`;
     button.textContent = "Copy value";
@@ -859,7 +865,7 @@
       stage !== "confirmed" && policy === "-all"
         ? "Use ~all until every legitimate sender is confirmed."
         : noSenders
-        ? "No sending service is authorised by this record. Do not publish an empty hard-fail record unless this domain sends no mail."
+        ? "No sending service is authorized by this record. Do not publish an empty hard-fail record unless this domain sends no mail."
         : "";
 
     const root = $("#spf-builder-output");
@@ -1246,7 +1252,7 @@
     </div>`;
 
     html += `<div class="header-summary">
-      <div class="metric"><small>Reported authentication</small><strong>${summary.passCount}/3 pass</strong></div>
+      <div class="metric"><small>Reported authentication</small><strong>${Number.isFinite(Number(summary?.passCount)) ? `${summary.passCount}/3 pass` : "unavailable"}</strong></div>
       <div class="metric"><small>Delivery chain</small><strong>${d.hops.length} hops</strong></div>
       <div class="metric"><small>Enrichable addresses</small><strong>${d.ips.length}</strong></div>
     </div>`;
@@ -1542,6 +1548,14 @@
     html += "</tbody>";
     batchTable.innerHTML = html;
     updateBatchBudgetNote(results);
+
+    // Re-rendering the table destroys the clicked button; hand focus back to
+    // the active column's control so keyboard and screen-reader users keep
+    // their place and hear the new aria-sort value.
+    if (batchSortCol) {
+      const activeSort = batchTable.querySelector(`.sort-button[data-col="${batchSortCol}"]`);
+      if (activeSort && document.activeElement === document.body) activeSort.focus();
+    }
 
     // Sort handlers
     batchTable.querySelectorAll(".sort-button[data-col]").forEach(button => {
