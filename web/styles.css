@@ -1001,7 +1001,10 @@ dialog h2 { margin: 0 0 30px; font-size: 32px; letter-spacing: -.04em; }
 .batch-table tbody tr:last-child td { border-bottom: none; }
 .batch-table td.domain-cell { font-family: var(--mono); color: var(--text); }
 .batch-domain-button {
-  padding: 0;
+  /* Negative margins keep the row's visual layout while the padding gives
+     the link-sized button a hit area that meets the 24px minimum. */
+  padding: 10px 12px;
+  margin: -10px -12px;
   border: 0;
   background: transparent;
   color: var(--text);
@@ -1013,6 +1016,17 @@ dialog h2 { margin: 0 0 30px; font-size: 32px; letter-spacing: -.04em; }
   text-underline-offset: 3px;
 }
 .batch-table td.score-cell { font: 500 16px/1 var(--mono); }
+/* Row-level explanations (why a row reads "error" or "unavailable") live in
+   visible text; title-only explanations are unreachable by keyboard, touch,
+   and most screen readers. */
+.batch-table .cell-note {
+  display: block;
+  max-width: 220px;
+  margin-top: 4px;
+  font: 400 11px/1.45 var(--sans);
+  color: var(--muted);
+  white-space: normal;
+}
 .score-cell strong.good { color: var(--accent); }
 .score-cell strong.warn { color: var(--warning); }
 .score-cell strong.poor { color: var(--critical); }

@@ -349,8 +349,27 @@ test('an errored batch row reads as an error, not as a failing domain', async ({
   const scoreCell = row.locator('.score-cell');
   await expect(scoreCell).toContainText('error');
   await expect(scoreCell).not.toContainText('/100');
-  await expect(scoreCell.locator('[title="Analysis failed unexpectedly"]')).toBeVisible();
+  // The reason is visible text, not a hover-only title.
+  await expect(scoreCell.locator('.cell-note')).toContainText('Analysis failed unexpectedly');
   await expect(row).not.toContainText('Fail');
+});
+
+test('crossing the batch line limit is announced once, not per keystroke', async ({ page }) => {
+  await page.goto('/#batch');
+  const input = page.getByLabel('Domains (one per line, max 3)');
+  await input.fill('example.com\nexample.org');
+  const status = page.locator('#batch-count-status');
+  await expect(status).toHaveText('');
+
+  await input.fill('example.com\nexample.org\nexample.net\nfour.example');
+  await expect(status).toContainText('1 line exceeds the 3-domain limit');
+
+  // Staying over the limit must not re-announce on every keystroke.
+  await input.fill('example.com\nexample.org\nexample.net\nfour.example\nfive.example');
+  await expect(status).toHaveText('2 lines exceed the 3-domain limit and will be rejected.');
+
+  await input.fill('example.com');
+  await expect(status).toHaveText('');
 });
 
 test('an untouched Record Builder spends no validation quota until input arrives', async ({ page }) => {

@@ -1324,12 +1324,25 @@
     updateBatchCount(lines.length);
   });
 
+  let batchOverLimitAnnounced = false;
   function updateBatchCount(count) {
     const extra = count - BATCH_MAX_DOMAINS_UI;
     const over = extra > 0;
     batchCount.textContent = `${Math.min(count, BATCH_MAX_DOMAINS_UI)} / ${BATCH_MAX_DOMAINS_UI} domains` +
       (over ? ` — ${extra} extra line${extra === 1 ? "" : "s"} rejected` : "");
     batchCount.classList.toggle("over-limit", over);
+    // The visible counter is silent per keystroke; only crossing the limit
+    // is announced, so screen-reader users learn about the rejection the
+    // moment it starts applying instead of at submit time.
+    const status = $("#batch-count-status");
+    if (!status) return;
+    if (over && !batchOverLimitAnnounced) {
+      status.textContent = `${extra} line${extra === 1 ? "" : "s"} exceed the ${BATCH_MAX_DOMAINS_UI}-domain limit and will be rejected.`;
+      batchOverLimitAnnounced = true;
+    } else if (!over) {
+      status.textContent = "";
+      batchOverLimitAnnounced = false;
+    }
   }
 
   $("#batch-clear-btn")?.addEventListener("click", () => {
@@ -1461,12 +1474,14 @@
       html += `<tr data-domain="${esc(r.domain)}">`;
       html += '<td class="domain-cell"><button class="batch-domain-button" type="button" data-domain="' + esc(r.domain) + '">' + esc(r.domain) + '</button></td>';
       // An errored row is not a scored row; showing 0/100 would present an
-      // internal failure as a failing domain.
+      // internal failure as a failing domain. The reason sits in visible
+      // text: a title attribute is unreachable by keyboard, touch, and most
+      // screen readers.
       const scoreCell = r.overall_status === "error"
-        ? `<span class="batch-status info" title="${esc(r.error || "Analysis failed")}">error</span>`
+        ? `<span class="batch-status info">error</span><span class="cell-note">${esc(r.error || "Analysis failed")}</span>`
         : Number.isFinite(r.overall_score)
           ? `<strong class="${scoreClassFor(r.overall_score)}">${r.overall_score}/100</strong>${truncated ? ' <span class="batch-status info">partial</span>' : ""}`
-          : `<span class="batch-status info" title="This stored report predates the current score format">unavailable</span>`;
+          : `<span class="batch-status info">unavailable</span><span class="cell-note">predates the current score format</span>`;
       html += `<td class="score-cell">${scoreCell}</td>`;
       html += `<td>${batchStatusCell(r.spf)}</td>`;
       html += `<td>${batchStatusCell(r.dkim)}</td>`;
