@@ -287,7 +287,10 @@ test("hop enrichment caches only authoritative PTR outcomes and discloses DNS tr
   assert.match(enrich, /result\.dns = dns;/);
   // cache.put must be reachable only on the definitive path.
   assert.doesNotMatch(enrich, /await cache\.put[\s\S]*const definitive/);
-  assert.match(enrich, /if \(!definitive\) \{\s*result\.dns = dns;\s*return result;\s*\}/);
+  // The cached body omits the caller's spelling; it is re-attached per
+  // response so hop matching by exact string keeps working.
+  assert.match(enrich, /if \(!definitive\) \{\s*result\.dns = dns;\s*return \{ \.\.\.result, ip \};\s*\}/);
+  assert.match(enrich, /header-cache\.internal\/ip\/\$\{quotaClientKey\(ip\)\}/);
 });
 
 test("the release flow pins the deployed source revision instead of a stale placeholder", async () => {

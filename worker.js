@@ -1202,25 +1202,32 @@ function reverseDnsName(ip) {
 }
 
 async function enrichIp(ip, budget = null) {
-  const cacheKey = new Request(`https://header-cache.internal/ip/${ip}`);
+  // Cache on the canonical address: 2001:DB8::1, 2001:db8::1, and
+  // 2001:0db8:0::1 are one host and must share one PTR entry. Callers keep
+  // their own spelling echoed back so hop matching by exact string still
+  // works in the frontend.
+  const cacheKey = new Request(`https://header-cache.internal/ip/${quotaClientKey(ip)}`);
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
-  if (cached) return cached.json();
+  if (cached) {
+    const cachedResult = await cached.json();
+    return { ...cachedResult, ip };
+  }
 
   const ptrName = reverseDnsName(ip);
   const ptrRecords = await queryDNS(ptrName, 'PTR', budget);
   const dns = dnsState(ptrRecords);
   // Only authoritative outcomes may be cached; a SERVFAIL or timeout must not
   // spend a day presenting "no PTR" for a host whose answer was never read.
+  // The cached body omits the caller's own spelling of the address.
   const definitive = ['ok', 'nodata', 'nxdomain'].includes(dns.status);
   const result = {
-    ip,
     ptr: definitive ? (ptrRecords[0] ? ptrRecords[0].replace(/\.$/, '') : null) : null,
     checkedAt: new Date().toISOString()
   };
   if (!definitive) {
     result.dns = dns;
-    return result;
+    return { ...result, ip };
   }
 
   await cache.put(cacheKey, new Response(JSON.stringify(result), {
@@ -1230,7 +1237,7 @@ async function enrichIp(ip, budget = null) {
     }
   }));
 
-  return result;
+  return { ...result, ip };
 }
 
 async function analyzeDomain(domain, budget = createRequestBudget(REQUEST_SUBREQUEST_LIMIT, Date.now() + ANALYSIS_WALL_MS)) {
