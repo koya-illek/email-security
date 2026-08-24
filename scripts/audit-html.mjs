@@ -211,9 +211,9 @@ await Promise.all([
   check('MCP connector manifest parses and matches the published tool set', async () => {
     const manifest = yaml.load(await (await get('/mcp-copilot.yaml')).text());
     assert.ok(manifest && typeof manifest === 'object', 'mcp-copilot.yaml did not parse');
-    // The manifest defers tool enumeration to tools/list, so drift between
-    // mcp.js and the docs would pass unnoticed; the published list is pinned
-    // here instead. Update this constant when mcp.js gains or loses a tool.
+    // The manifest defers tool enumeration to tools/list; the published list
+    // in openapi.yaml is pinned here and cross-checked against the served
+    // endpoint below, so mcp.js cannot drift from the docs unnoticed.
     const spec = yaml.load(await (await get('/openapi.yaml')).text());
     const declared = spec['x-ai-usage']?.['mcp-tools'];
     assert.deepEqual(declared, [
@@ -221,6 +221,24 @@ await Promise.all([
       'inspect_spf', 'evaluate_spf', 'validate_email_record', 'build_email_record',
       'enrich_email_hops', 'get_email_security_report'
     ], 'x-ai-usage mcp-tools must match the shipped mcp.js tool set');
+  }),
+
+  check('the served MCP endpoint lists exactly the documented tools', async () => {
+    const spec = yaml.load(await (await get('/openapi.yaml')).text());
+    const declared = spec['x-ai-usage']?.['mcp-tools'];
+    const response = await fetch(`${base}/mcp/v2`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream'
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    });
+    assert.equal(response.status, 200, `tools/list answered HTTP ${response.status}`);
+    const payload = await response.json();
+    const served = (payload.result?.tools || []).map(tool => tool.name);
+    assert.deepEqual(served.sort(), [...declared].sort(),
+      'the running server must expose exactly the tools openapi.yaml declares');
   }),
 ]);
 
