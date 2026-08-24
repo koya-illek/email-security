@@ -1192,16 +1192,17 @@
 
   // Every other disabled control here explains itself through its own label;
   // a silently dead "Enrich Hops" gave no hint it depends on a finished
-  // analysis that found public IPs.
+  // analysis that found public IPs. Labels deliberately avoid the phrase
+  // "Analyze Headers" so role-name selectors stay unambiguous.
   function setEnrichButtonState() {
     if (!lastHeaderAnalysis) {
-      enrichHeadersBtn.textContent = "Analyze headers first";
+      enrichHeadersBtn.textContent = "No analysis to enrich yet";
       enrichHeadersBtn.disabled = true;
     } else if (Array.isArray(lastHeaderAnalysis.ips) && lastHeaderAnalysis.ips.length) {
       enrichHeadersBtn.textContent = "Enrich Hops";
       enrichHeadersBtn.disabled = false;
     } else {
-      enrichHeadersBtn.textContent = "No public IPs to enrich";
+      enrichHeadersBtn.textContent = "No public IPs in these headers";
       enrichHeadersBtn.disabled = true;
     }
   }

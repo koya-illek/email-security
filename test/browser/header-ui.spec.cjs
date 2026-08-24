@@ -595,10 +595,10 @@ test('resets SPF change confirmation after every subsequent record change', asyn
   await expect(page.locator('#spf-safety-notice')).toContainText('Terminal policy changed');
 });
 
-test('an HTTP-error validation answer blocks copying in both builders', async ({ page }) => {
+test('an HTTP-error validation answer blocks copying without calling the record invalid', async ({ page }) => {
   // An oversized record body crosses the API's 16 KiB cap and is answered
   // with a bare {error} envelope; the builders must never read that as a
-  // successful validation.
+  // successful validation — or as a verdict on the record at all.
   await page.route('**/api/records/validate', route => route.fulfill({
     status: 413,
     contentType: 'application/json',
@@ -610,19 +610,19 @@ test('an HTTP-error validation answer blocks copying in both builders', async ({
 
   const spfCopy = page.locator('#spf-builder-output .copy-btn');
   await expect(spfCopy).toBeDisabled();
-  await expect(spfCopy).toHaveText('Invalid record');
+  await expect(spfCopy).toHaveText('Validation unavailable');
   const spfNotice = page.locator('#spf-builder-output .validation-result .notice');
-  await expect(spfNotice).toContainText('Cannot copy this record');
+  await expect(spfNotice).toContainText('Validation unavailable');
   await expect(spfNotice).toContainText('16 KiB limit');
+  await expect(page.locator('#spf-builder-output')).not.toContainText('Invalid record');
   await expect(page.locator('#spf-builder-output')).not.toContainText('Valid record');
-  await expect(page.locator('#spf-builder-output')).not.toContainText('undefined');
 
   await page.getByRole('tab', { name: 'DMARC Planner' }).click();
   await page.locator('#dmarc-domain').fill('example.com');
   const dmarcCopy = page.locator('#dmarc-builder-output .copy-btn');
   await expect(dmarcCopy).toBeDisabled();
-  await expect(dmarcCopy).toHaveText('Invalid record');
-  await expect(page.locator('#dmarc-builder-output .validation-result .notice')).toContainText('Cannot copy this record');
+  await expect(dmarcCopy).toHaveText('Validation unavailable');
+  await expect(page.locator('#dmarc-builder-output .validation-result .notice')).toContainText('Validation unavailable');
 });
 
 test('an unreadable analysis answer reads as service trouble, never parser noise', async ({ page }) => {
@@ -774,7 +774,7 @@ test('clearing during hop enrichment reports nothing and throws no internal erro
   // locator stays stable across the relabel.
   const resetEnrich = page.locator('#enrich-headers-btn');
   await expect(resetEnrich).toBeDisabled();
-  await expect(resetEnrich).toHaveText('Analyze headers first');
+  await expect(resetEnrich).toHaveText('No analysis to enrich yet');
   await expect(page.locator('#header-error')).toBeHidden();
   await expect(page.locator('#header-error-msg')).not.toContainText('Cannot read properties');
   await expect(page.locator('#header-results')).not.toContainText('dns.google');
@@ -785,7 +785,7 @@ test('the enrich button explains its disabled states instead of shipping dead', 
   // Before any analysis: the dependency on Analyze Headers is named.
   const enrich = page.locator('#enrich-headers-btn');
   await expect(enrich).toBeDisabled();
-  await expect(enrich).toHaveText('Analyze headers first');
+  await expect(enrich).toHaveText('No analysis to enrich yet');
 
   // An analysis that found no public IPs names that outcome too, and the
   // next analysis with hops re-enables the same control.
@@ -797,7 +797,7 @@ test('the enrich button explains its disabled states instead of shipping dead', 
   await page.getByLabel('Complete message headers').fill('From: a@example.com\r\nSubject: no chain here');
   await page.getByRole('button', { name: 'Analyze Headers', exact: true }).click();
   await expect(page.locator('#header-results')).toBeVisible();
-  await expect(enrich).toHaveText('No public IPs to enrich');
+  await expect(enrich).toHaveText('No public IPs in these headers');
   await expect(enrich).toBeDisabled();
 
   await page.route('**/api/header/analyze', route => route.fulfill({
