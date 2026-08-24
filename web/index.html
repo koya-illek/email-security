@@ -70,7 +70,7 @@
         <label for="domain-input">Domain to check</label>
         <div class="input-shell">
           <span class="protocol" aria-hidden="true">DNS</span>
-          <input id="domain-input" name="domain" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="example.com" required>
+          <input id="domain-input" name="domain" type="text" inputmode="url" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="example.com" required>
           <button type="submit" id="check-button">
             <span>Check security</span>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4-4 4 4-4 4"/></svg>
@@ -130,7 +130,7 @@
       <form class="trace-form" id="batch-form">
         <label for="batch-input">Domains (one per line, max 3)</label>
         <div class="batch-input-shell">
-          <textarea id="batch-input" placeholder="example.com&#10;anotherdomain.org&#10;thirddomain.net" rows="8" spellcheck="false"></textarea>
+          <textarea id="batch-input" placeholder="example.com&#10;anotherdomain.org&#10;thirddomain.net" rows="8" autocapitalize="none" autocorrect="off" spellcheck="false"></textarea>
         </div>
         <div class="form-meta">
           <span>SPF, DKIM, DMARC, MX, Transport compared</span>
@@ -189,7 +189,7 @@
         <label for="spf-domain-input">Domain whose SPF record should be inspected</label>
         <div class="input-shell">
           <span class="protocol" aria-hidden="true">SPF</span>
-          <input id="spf-domain-input" name="domain" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="example.com" required>
+          <input id="spf-domain-input" name="domain" type="text" inputmode="url" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="example.com" required>
           <button type="submit" id="spf-button">
             <span>Inspect SPF</span>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4-4 4 4-4 4"/></svg>
@@ -235,7 +235,7 @@
         <div class="form-grid">
           <div class="field full">
             <label for="builder-domain">Domain</label>
-            <input id="builder-domain" placeholder="example.com">
+            <input id="builder-domain" placeholder="example.com" autocapitalize="none" autocorrect="off" spellcheck="false">
           </div>
           <div class="field full">
             <fieldset class="provider-fieldset">
@@ -286,7 +286,7 @@
         <div class="form-grid">
           <div class="field full">
             <label for="dmarc-domain">Domain</label>
-            <input id="dmarc-domain" placeholder="example.com">
+            <input id="dmarc-domain" placeholder="example.com" autocapitalize="none" autocorrect="off" spellcheck="false">
           </div>
           <div class="field">
             <label for="dmarc-stage">Rollout stage</label>
@@ -297,7 +297,7 @@
             </select>
           </div>
           <div class="field">
-            <label for="dmarc-testing">Policy state (RFC 9989)</label>
+            <label for="dmarc-testing">Policy state</label>
             <select id="dmarc-testing">
               <option value="n">Production (t=n)</option>
               <option value="y">Testing (t=y)</option>
@@ -305,7 +305,7 @@
           </div>
           <div class="field full">
             <label for="dmarc-rua">Aggregate report mailbox</label>
-            <input id="dmarc-rua" placeholder="dmarc@example.com">
+            <input id="dmarc-rua" placeholder="dmarc@example.com" autocapitalize="none" autocorrect="off" spellcheck="false">
           </div>
           <div class="field">
             <label for="dmarc-subdomain">Subdomain policy</label>
@@ -345,7 +345,7 @@
         </div>
         <div class="cs-body cs-body-intro">
           <label class="field-label" for="header-input">Complete message headers</label>
-          <textarea class="header-input" id="header-input" placeholder="Paste the original headers from your mailbox provider…" spellcheck="false" aria-describedby="header-privacy"></textarea>
+          <textarea class="header-input" id="header-input" placeholder="Paste the original headers from your mailbox provider…" autocapitalize="none" autocorrect="off" spellcheck="false" aria-describedby="header-privacy"></textarea>
           <div class="privacy-note" id="header-privacy">
             <strong>Stateless analysis.</strong>
             <span>Headers are sent to this Cloudflare Worker for this request only; this application does not store them. Only the domain and batch workflows persist anything (shareable reports, auto-deleted after 14 days), and hop enrichment separately submits up to 10 public IP addresses for PTR lookup.</span>

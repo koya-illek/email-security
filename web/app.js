@@ -194,13 +194,35 @@
   // Completed analyses swap whole report sections into the page; announcing
   // those containers verbatim buries screen-reader users in markup. The
   // hidden status region carries one short completion line instead, and the
-  // clear-then-set dance re-announces identical retry messages.
+  // clear-then-set dance re-announces identical retry messages. Tracking the
+  // pending timer keeps two completions landing close together from
+  // interleaving each other's cleared text.
   const analysisStatusRegion = $("#analysis-status");
+  let analysisStatusTimer = 0;
   function announceAnalysis(message) {
     if (!analysisStatusRegion) return;
+    clearTimeout(analysisStatusTimer);
     analysisStatusRegion.textContent = "";
-    setTimeout(() => { analysisStatusRegion.textContent = message; }, 50);
+    analysisStatusTimer = setTimeout(() => { analysisStatusRegion.textContent = message; }, 50);
   }
+
+  // Browsers print collapsed <details> as their summary line alone, so a
+  // printed domain report would silently omit most of its evidence. Every
+  // section is opened for the printout and closed again afterwards.
+  window.addEventListener("beforeprint", () => {
+    $$("main details").forEach((details) => {
+      if (!details.open) {
+        details.dataset.printAutoOpened = "true";
+        details.open = true;
+      }
+    });
+  });
+  window.addEventListener("afterprint", () => {
+    $$("details[data-print-auto-opened]").forEach((details) => {
+      delete details.dataset.printAutoOpened;
+      details.open = false;
+    });
+  });
 
   // Numeric-only dates ("9/5/2026") are ambiguous across locales; a bearer
   // link's expiry must read the same way for everyone.
