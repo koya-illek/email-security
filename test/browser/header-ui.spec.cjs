@@ -374,6 +374,34 @@ test('an untouched Record Builder spends no validation quota until input arrives
   await expect.poll(() => validateCalls).toBeGreaterThan(0);
 });
 
+test('mechanisms typed without a valid domain spend no validation quota', async ({ page }) => {
+  // Typing mechanisms ahead of their domain used to fire debounced
+  // {domain: ""} validations that the server could only refuse, burning the
+  // expensive limiter while typing.
+  let validateCalls = 0;
+  await page.route('**/api/records/validate', route => {
+    validateCalls++;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ valid: true, errors: [], warnings: [], lookupCount: 0, characterCount: 12 })
+    });
+  });
+
+  await page.goto('/#builder');
+  await page.locator('#spf-custom').fill('ip4:192.0.2.1');
+  await expect(page.locator('#spf-builder-output .copy-btn')).toHaveText('Enter a domain to validate');
+  await page.waitForTimeout(700); // outlasts the validation debounce
+
+  await page.locator('#builder-domain').fill('bad..example.com');
+  await expect(page.locator('#spf-builder-output .copy-btn')).toHaveText('Enter a valid domain to validate');
+  await page.waitForTimeout(700);
+
+  expect(validateCalls).toBe(0);
+  await page.locator('#builder-domain').fill('example.com');
+  await expect.poll(() => validateCalls).toBe(1);
+});
+
 test('Build records preserves imported SPF providers and blocks unconfirmed removal', async ({ page }) => {
   const report = {
     domain: 'example.com',

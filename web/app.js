@@ -860,17 +860,19 @@
       safetyNotice.textContent = "No sending mechanisms are selected. An empty -all record rejects every sender.";
     }
 
-    // A pristine builder (no domain, no mechanisms, no import) has nothing to
-    // validate. Skipping the POST here stops every page view from spending
-    // validation quota and two daily-counter writes before the Record Builder
-    // is ever opened; the first input resumes the normal debounced flow.
-    if (!domain && !terms.length && !importedSpf) {
-      // Also cancel a validation scheduled before this render emptied the
-      // builder; firing it would spend quota on a record that no longer exists.
+    // Validation runs only against a syntactically valid domain. A pristine
+    // builder has nothing to validate, and mechanisms typed ahead of their
+    // domain must not spend validation quota and two daily-counter writes on
+    // requests the server can only refuse; both states park the copy button
+    // with the reason instead.
+    if (!validBuilderDomain(domain)) {
+      // Also cancel a validation scheduled before this render invalidated
+      // the domain; firing it would spend quota on a record that no longer
+      // has a publishable home.
       clearTimeout(spfValidationTimer);
       const button = root.querySelector(".copy-btn");
       if (button) {
-        button.textContent = "Enter a domain to validate";
+        button.textContent = domain ? "Enter a valid domain to validate" : "Enter a domain to validate";
         button.disabled = true;
       }
       return;
@@ -948,13 +950,13 @@
     const extra = [];
     if (!validBuilderDomain(domain)) extra.push("Enter a valid domain before copying.");
 
-    if (!domain && !rua) {
-      // Idle DMARC planner: same quota rationale as the idle SPF builder,
-      // including cancelling anything scheduled before this render.
+    if (!validBuilderDomain(domain)) {
+      // Idle or half-filled DMARC planner: same quota rationale as the SPF
+      // builder, including cancelling anything scheduled before this render.
       clearTimeout(dmarcValidationTimer);
       const button = root.querySelector(".copy-btn");
       if (button) {
-        button.textContent = "Enter a domain to validate";
+        button.textContent = domain ? "Enter a valid domain to validate" : "Enter a domain to validate";
         button.disabled = true;
       }
       return;
