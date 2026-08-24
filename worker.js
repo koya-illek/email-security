@@ -37,6 +37,12 @@ const {
   DMARC_POLICY_VALUES,
   effectiveDmarcPolicy
 } = require('./policy-tags');
+const {
+  isValidMtaStsMxPattern,
+  mtaStsMxMatches,
+  parsePolicyLines
+} = require('./mta-sts');
+
 
 const DOH_PROVIDERS = [
   'https://cloudflare-dns.com/dns-query',
@@ -2896,17 +2902,9 @@ function analyzeTransportSecurity(mtaStsRecords, tlsRptRecords, policyResult, mx
   };
 }
 
-function isValidMtaStsMxPattern(value) {
-  return /^(?:\*\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(String(value || '')) && !String(value).includes('..');
-}
-
-function mtaStsMxMatches(host, pattern) {
-  const cleanHost = String(host || '').toLowerCase().replace(/\.$/, '');
-  const cleanPattern = String(pattern || '').toLowerCase().replace(/\.$/, '');
-  return cleanPattern.startsWith('*.')
-    ? cleanHost.endsWith(cleanPattern.slice(1)) && cleanHost !== cleanPattern.slice(2)
-    : cleanHost === cleanPattern;
-}
+// MTA-STS policy parsing, mx-pattern validation, and wildcard matching live
+// in mta-sts.js, shared with its behavioral unit suite. The matcher follows
+// RFC 8461 §4.1: a wildcard expands to exactly one label.
 
 function isValidTlsRptUri(value) {
   if (/^mailto:[^@\s,]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(value)) return true;
@@ -2916,21 +2914,6 @@ function isValidTlsRptUri(value) {
   } catch {
     return false;
   }
-}
-
-function parsePolicyLines(policy) {
-  const tags = {};
-  String(policy || '').split(/\r?\n/).forEach(line => {
-    const clean = line.trim();
-    if (!clean || clean.startsWith('#')) return;
-    const idx = clean.indexOf(':') > -1 && clean.indexOf('=') === -1 ? clean.indexOf(':') : clean.indexOf('=');
-    if (idx < 1) return;
-    const key = clean.slice(0, idx).trim().toLowerCase().replace('-', '_');
-    const value = clean.slice(idx + 1).trim();
-    if (tags[key]) tags[key] = Array.isArray(tags[key]) ? [...tags[key], value] : [tags[key], value];
-    else tags[key] = value;
-  });
-  return tags;
 }
 
 function calculateScore(spf, dkim, dmarc, mx, caa, transport) {
