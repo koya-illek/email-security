@@ -1223,11 +1223,13 @@ function reverseDnsName(ip) {
 }
 
 async function enrichIp(ip, budget = null) {
-  // Cache on the canonical address: 2001:DB8::1, 2001:db8::1, and
-  // 2001:0db8:0::1 are one host and must share one PTR entry. Callers keep
-  // their own spelling echoed back so hop matching by exact string still
-  // works in the frontend.
-  const cacheKey = new Request(`https://header-cache.internal/ip/${quotaClientKey(ip)}`);
+  // Cache on the canonical address spelling: 2001:DB8::1, 2001:db8::1, and
+  // 2001:0db8:0::1 are one host and must share one PTR entry. The quota
+  // /64 collapse is deliberately NOT used here — two different mail hosts
+  // inside one /64 would otherwise serve each other's PTR for a day.
+  // Callers keep their own spelling echoed back so hop matching by exact
+  // string still works in the frontend.
+  const cacheKey = new Request(`https://header-cache.internal/ip/${ipaddr.parse(ip).toNormalizedString()}`);
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
   if (cached) {

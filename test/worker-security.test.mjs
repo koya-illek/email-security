@@ -342,7 +342,11 @@ test("hop enrichment caches only authoritative PTR outcomes and discloses DNS tr
   // The cached body omits the caller's spelling; it is re-attached per
   // response so hop matching by exact string keeps working.
   assert.match(enrich, /if \(!definitive\) \{\s*result\.dns = dns;\s*return \{ \.\.\.result, ip \};\s*\}/);
-  assert.match(enrich, /header-cache\.internal\/ip\/\$\{quotaClientKey\(ip\)\}/);
+  // The cache key canonicalizes one address's spelling but must NOT use the
+  // quota /64 collapse: distinct hosts sharing a prefix would serve each
+  // other's PTR for a day.
+  assert.match(enrich, /header-cache\.internal\/ip\/\$\{ipaddr\.parse\(ip\)\.toNormalizedString\(\)\}/);
+  assert.doesNotMatch(enrich, /quotaClientKey/);
 });
 
 test("the release flow pins the deployed source revision instead of a stale placeholder", async () => {
