@@ -229,12 +229,12 @@ test("duplicate DMARC tags fail live analysis before any policy value is read", 
 });
 
 test("DMARC report-destination parsing treats the mailto scheme case-insensitively", () => {
-  // RFC 3986 §3.1: schemes are case-insensitive. The validator accepts
-  // MAILTO:, so the authorisation loop must too — uppercase spellings used
-  // to silently skip external-destination verification.
-  const parser = worker.slice(worker.indexOf("function parseMailtoList("), worker.indexOf("function analyzeDKIM("));
-  assert.match(parser, /\/\^mailto:\/i\.test\(item\)/);
-  assert.doesNotMatch(parser, /startsWith\('mailto:'\)/);
+  // RFC 3986 §3.1: schemes are case-insensitive. The parser moved to
+  // policy-tags.js (behaviorally tested there); the worker must use it
+  // rather than any local, case-sensitive startsWith check.
+  assert.match(worker, /parseMailtoDestinations\(tags\.rua\)/);
+  assert.doesNotMatch(worker, /function parseMailtoList\(/);
+  assert.doesNotMatch(worker, /startsWith\('mailto:'\)/);
 });
 
 test("malformed MX priorities cannot poison the primary-host sort", () => {
@@ -544,4 +544,16 @@ test("the MCP enrich tool enforces the same unique-public-IP contract as REST", 
   assert.ok(branch.length > 0, "MCP enrich branch must exist");
   assert.match(branch, /args\.ips\.length < 1 \|\| args\.ips\.length > 10 \|\| args\.ips\.some\(ip => typeof ip !== 'string' \|\| !isPublicIpAddress\(ip\)\)/);
   assert.match(branch, /ips must not contain duplicates/);
+});
+
+test("the scored SPF path applies the same value-level checks as the validator", () => {
+  // analyzeSPF's grammar gate admits ip4/ip6/a/mx shapes, so value truth
+  // must come from the shared predicates — otherwise a published record
+  // like "ip4:1.2.3.0/24//64" scores a pass while receivers permerror it.
+  const loop = worker.slice(worker.indexOf("const invalidTerms = [];"), worker.indexOf("function findDuplicateSpfIncludes"));
+  assert.ok(loop.length > 0, "analyzeSPF mechanism loop must exist");
+  assert.match(loop, /isValidIpv4Cidr\(value\)/);
+  assert.match(loop, /isValidIpv6Cidr\(value\)/);
+  assert.match(loop, /spfDualCidrError\(clean\)/);
+  assert.match(worker, /dmarcReportingState\(tags\)\.published/, "DMARC analysis must distinguish absent rua= from undeliverable rua=");
 });

@@ -40,7 +40,11 @@ const {
   spfTermSyntaxError,
   missingSpfTargetClass,
   DMARC_POLICY_VALUES,
-  effectiveDmarcPolicy
+  effectiveDmarcPolicy,
+  isValidIpv4Cidr,
+  spfDualCidrError,
+  parseMailtoDestinations,
+  dmarcReportingState
 } = require('./policy-tags');
 const {
   isValidMtaStsMxPattern,
@@ -1203,7 +1207,7 @@ async function validateDmarcRecord(domain, value, budget = null) {
   if (tags.p === 'none') warnings.push('DMARC is in monitoring mode and does not request enforcement.');
   if (record.length > 2048) errors.push('DMARC record is too large to publish safely.');
   if (domain && tags.rua && tags.rua.split(',').every(item => isValidDmarcReportUri(item.trim()))) {
-    const external = parseMailtoList(tags.rua).filter(address => isExternalReportDestination(domain, address));
+    const external = parseMailtoDestinations(tags.rua).filter(address => isExternalReportDestination(domain, address));
     for (const address of external) {
       const query = reportAuthorisationName(domain, address);
       const authRecords = await queryDNS(query, 'TXT', budget);
@@ -1222,18 +1226,9 @@ async function validateDmarcRecord(domain, value, budget = null) {
   };
 }
 
-function isValidIpv4Cidr(value) {
-  const parts = String(value).split('/');
-  if (parts.length > 2) return false;
-  const [ip, prefix] = parts;
-  if (!isPublicOrReservedIpv4(ip)) return false;
-  return prefix === undefined || (/^\d{1,2}$/.test(prefix) && Number(prefix) >= 0 && Number(prefix) <= 32);
-}
-
-function isPublicOrReservedIpv4(ip) {
-  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip)) return false;
-  return ip.split('.').every(part => Number(part) >= 0 && Number(part) <= 255);
-}
+// isValidIpv4Cidr lives in policy-tags.js (shared with the scored SPF path
+// and its behavioral suite); IPv6 validity stays here because its address
+// grammar is parsed by ipaddr.
 
 function isValidIpv6Cidr(value) {
   const slash = String(value).lastIndexOf('/');
@@ -1760,6 +1755,20 @@ async function analyzeSPF(domain, records, budget = null) {
     }
     const clean = stripSpfQualifier(part);
     if (clean.startsWith('ip4:') || clean.startsWith('ip6:')) {
+      // The grammar gate admits any [0-9./] shape, so value-level truth
+      // (octets, prefix bounds, no dual CIDR on ip4) lives here — the same
+      // checks validateSpfRecord applies. Without them a published record
+      // like "ip4:1.2.3.0/24//64" would score a pass while receivers
+      // permerror it, and the validate endpoint would contradict the report.
+      const family = clean.startsWith('ip4:') ? 'IPv4' : 'IPv6';
+      const value = clean.slice(4);
+      const valid = clean.startsWith('ip4:')
+        ? isValidIpv4Cidr(value)
+        : isValidIpv6Cidr(value);
+      if (!valid) {
+        invalidTerms.push(`${part} (the ${family} value "${value}" is not a valid address or prefix)`);
+        continue;
+      }
       mechanisms.push({ type: 'ip', value: clean });
     } else if (clean.startsWith('include:')) {
       mechanisms.push({ type: 'include', value: clean });
@@ -1768,8 +1777,18 @@ async function analyzeSPF(domain, records, budget = null) {
         if (clean.includes(key) || part.includes(key)) providers.add(name);
       }
     } else if (clean.startsWith('a:') || clean === 'a' || clean.startsWith('a/')) {
+      const rangeError = spfDualCidrError(clean);
+      if (rangeError !== null) {
+        invalidTerms.push(`${part} (${rangeError})`);
+        continue;
+      }
       mechanisms.push({ type: 'a', value: clean });
     } else if (clean.startsWith('mx:') || clean === 'mx' || clean.startsWith('mx/')) {
+      const rangeError = spfDualCidrError(clean);
+      if (rangeError !== null) {
+        invalidTerms.push(`${part} (${rangeError})`);
+        continue;
+      }
       mechanisms.push({ type: 'mx', value: clean });
     } else if (clean.startsWith('exists:')) {
       mechanisms.push({ type: 'exists', value: clean });
@@ -2410,8 +2429,8 @@ function analyzeDMARC(records, discovery = {}) {
   }
 
   // Parse reporting
-  const rua = parseMailtoList(tags.rua);
-  const ruf = parseMailtoList(tags.ruf);
+  const rua = dmarcReportingState(tags).destinations;
+  const ruf = parseMailtoDestinations(tags.ruf);
 
   if (rua.length) {
     checks.push({
@@ -2419,6 +2438,16 @@ function analyzeDMARC(records, discovery = {}) {
       title: 'Aggregate reports configured',
       detail: `Reports to: ${rua.join(', ')}`,
       recommendation: ''
+    });
+  } else if (dmarcReportingState(tags).published) {
+    // A rua= tag exists but yielded no deliverable destination: claiming
+    // "No rua= tag" would be factually wrong, while staying silent would
+    // leave the owner waiting for reports no receiver can send.
+    checks.push({
+      status: 'warn',
+      title: 'rua= has no deliverable destination',
+      detail: `The rua= tag "${tags.rua}" contains no mailto: address. Receivers only deliver aggregate reports to mailto: URIs, so no reports can arrive.`,
+      recommendation: 'Use mailto: addresses, e.g. rua=mailto:dmarc@yourdomain.com.'
     });
   } else {
     checks.push({
@@ -2513,20 +2542,8 @@ function analyzeDMARC(records, discovery = {}) {
   return { status, record, checks, policy, rua, ruf, policyDomain: discovery.policyDomain || null, inherited: Boolean(discovery.inherited) };
 }
 
-// parseTagRecord lives in policy-tags.js, shared with the unit suites.
-
-function parseMailtoList(value) {
-  if (!value) return [];
-  // URI schemes are case-insensitive (RFC 3986 §3.1); the validator accepts
-  // MAILTO: so the authorisation loop must too, or uppercase spellings
-  // silently skip external-destination verification.
-  return value
-    .split(',')
-    .map(item => item.trim())
-    .filter(item => /^mailto:/i.test(item))
-    .map(item => item.slice(7).split('!')[0])
-    .filter(Boolean);
-}
+// parseTagRecord and parseMailtoDestinations live in policy-tags.js, shared
+// with the unit suites.
 
 function analyzeDKIM(results) {
   if (!results.length) {

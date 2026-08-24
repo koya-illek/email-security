@@ -13,7 +13,11 @@ const {
   effectiveDmarcPolicy,
   isValidSpfDomainSpec,
   spfTermSyntaxError,
-  parseTagRecord
+  parseTagRecord,
+  isValidIpv4Cidr,
+  spfDualCidrError,
+  parseMailtoDestinations,
+  dmarcReportingState
 } = require("../policy-tags.js");
 const { estimateDkimKeyBits } = require("../scoring.js");
 
@@ -128,4 +132,44 @@ test("a real DKIM key keeps its exact bit length through parseTagRecord", () => 
   const record = "v=DKIM1; k=rsa; p=" + publicKey.export({ type: "spki", format: "der" }).toString("base64");
   const parsed = parseTagRecord(record);
   assert.equal(estimateDkimKeyBits(parsed.p), 1024);
+});
+
+test("IPv4 CIDR validity covers octet ranges, prefix bounds and dual-CIDR nonsense", () => {
+  assert.equal(isValidIpv4Cidr("192.0.2.0/24"), true);
+  assert.equal(isValidIpv4Cidr("192.0.2.1"), true);
+  assert.equal(isValidIpv4Cidr("192.0.2.0/32"), true);
+  assert.equal(isValidIpv4Cidr("999.10.0.1"), false);
+  assert.equal(isValidIpv4Cidr("192.0.2.0/33"), false);
+  // A dual CIDR on ip4 matches no receiver grammar.
+  assert.equal(isValidIpv4Cidr("1.2.3.0/24//64"), false);
+  assert.equal(isValidIpv4Cidr(""), false);
+});
+
+test("a/mx dual-CIDR lengths beyond 32/128 are named as receiver rejections", () => {
+  assert.match(spfDualCidrError("a/33"), /exceeds 32/);
+  assert.match(spfDualCidrError("mx//129"), /exceeds 128/);
+  assert.match(spfDualCidrError("mx:relay.example.com/40"), /exceeds 32/);
+  assert.equal(spfDualCidrError("a/24"), null);
+  assert.equal(spfDualCidrError("mx//64"), null);
+  assert.equal(spfDualCidrError("a"), null);
+});
+
+test("parseMailtoDestinations keeps case-insensitive schemes and strips size limits", () => {
+  assert.deepEqual(parseMailtoDestinations("mailto:a@example.com!10m, MAILTO:B@Example.COM"), [
+    "a@example.com",
+    "B@Example.COM"
+  ]);
+  // Non-mailto URIs are not deliverable destinations.
+  assert.deepEqual(parseMailtoDestinations("https://reports.example/dmarc"), []);
+});
+
+test("dmarcReportingState separates an absent rua= from a published-but-undeliverable one", () => {
+  assert.deepEqual(dmarcReportingState({}), { published: false, destinations: [] });
+  assert.deepEqual(dmarcReportingState({ rua: "mailto:dmarc@example.com" }), {
+    published: true,
+    destinations: ["dmarc@example.com"]
+  });
+  const httpsOnly = dmarcReportingState({ rua: "https://reports.example/dmarc" });
+  assert.equal(httpsOnly.published, true);
+  assert.deepEqual(httpsOnly.destinations, []);
 });

@@ -170,6 +170,51 @@ function missingSpfTargetClass(records) {
   return 'void';
 }
 
+// ── Value-level truth for SPF terms whose SHAPE the grammar gate admits ──
+// The grammar gate accepts "ip4:[0-9./]+" and a/mx dual-CIDR shapes, so
+// out-of-range values would otherwise reach a pass verdict on one endpoint
+// while validateSpfRecord rejects them — one record, two verdicts. These
+// predicates are shared so both paths judge identically.
+
+function isValidIpv4Cidr(value) {
+  const parts = String(value).split('/');
+  if (parts.length > 2) return false;
+  const [ip, prefix] = parts;
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip)) return false;
+  if (!ip.split('.').every(part => Number(part) >= 0 && Number(part) <= 255)) return false;
+  return prefix === undefined || (/^\d{1,2}$/.test(prefix) && Number(prefix) >= 0 && Number(prefix) <= 32);
+}
+
+function spfDualCidrError(term) {
+  const cidrMatch = String(term).match(/(?:^|[^/])\/(\d{1,3})(?:\/\/(\d{1,3}))?$/);
+  const dualMatch = String(term).match(/\/\/(\d{1,3})$/);
+  const cidr4 = cidrMatch ? Number(cidrMatch[1]) : null;
+  const cidr6 = dualMatch ? Number(dualMatch[1]) : null;
+  if (cidr4 !== null && cidr4 > 32) return `the IPv4 CIDR length ${cidr4} exceeds 32`;
+  if (cidr6 !== null && cidr6 > 128) return `the IPv6 CIDR length ${cidr6} exceeds 128`;
+  return null;
+}
+
+// rua=/ruf= destinations: RFC 3986 schemes are case-insensitive (§3.1), so
+// "MAILTO:" must count as deliverable exactly like lowercase spellings.
+function parseMailtoDestinations(value) {
+  return String(value || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(item => /^mailto:/i.test(item))
+    .map(item => item.slice(7).split('!')[0])
+    .filter(Boolean);
+}
+
+// What receivers can actually do with a DMARC record's reporting tags:
+// distinguish "no tag published" from "tag published but undeliverable" —
+// claiming absence when a tag exists is factually wrong, while staying
+// silent leaves the owner waiting for reports no receiver can send.
+function dmarcReportingState(tags) {
+  const raw = String(tags.rua || '').trim();
+  return { published: Boolean(raw), destinations: parseMailtoDestinations(raw) };
+}
+
 module.exports = {
   DMARC_POLICY_VALUES,
   isDmarcVersionRecord,
@@ -183,5 +228,9 @@ module.exports = {
   isSpfModifierShape,
   spfTermSyntaxError,
   missingSpfTargetClass,
-  effectiveDmarcPolicy
+  effectiveDmarcPolicy,
+  isValidIpv4Cidr,
+  spfDualCidrError,
+  parseMailtoDestinations,
+  dmarcReportingState
 };
