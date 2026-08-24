@@ -82,6 +82,51 @@ async function postResponse(path, body, headers = {}) {
     assert.equal(mcpPreflight.headers.get('access-control-allow-methods'), 'POST, OPTIONS');
     assert.equal((await fetch(base + '/api/check', { method: 'OPTIONS' })).headers.get('access-control-allow-methods'), 'GET, POST, OPTIONS', 'REST keeps the global preflight');
 
+    // MCP end-to-end over HTTP: everything above only proves routing; the
+    // JSON-RPC lifecycle, tool dispatch, and error shapes must work against
+    // a real running worker too.
+    const mcpCall = async (message, headers = {}) => fetch(base + '/mcp/v2', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'accept': 'application/json, text/event-stream',
+        'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}`,
+        ...headers
+      },
+      body: JSON.stringify(message)
+    });
+    const initialized = await (await mcpCall({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25' } })).json();
+    assert.equal(initialized.result.protocolVersion, '2025-11-25', 'initialize negotiates a supported version');
+    assert.ok(initialized.result.serverInfo?.name, 'initialize names the server');
+    const downgrade = await (await mcpCall({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '2999-01-01' } })).json();
+    assert.equal(downgrade.result.protocolVersion, '2025-11-25', 'a future version negotiates down instead of stranding the client');
+    const listed = await (await mcpCall({ jsonrpc: '2.0', id: 3, method: 'tools/list' })).json();
+    assert.equal(listed.result.tools.length, 9, 'tools/list serves the nine documented tools');
+    const headerToolCall = await (await mcpCall({
+      jsonrpc: '2.0', id: 4, method: 'tools/call',
+      params: { name: 'analyze_email_headers', arguments: { headers: 'From: sender@example.com\r\n' } }
+    })).json();
+    assert.equal(headerToolCall.result.isError, false);
+    assert.equal(headerToolCall.result.structuredContent.summary.status, 'warn', 'a receiver-report-less paste warns through MCP like REST');
+    const unknownTool = await (await mcpCall({
+      jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'no_such_tool', arguments: {} }
+    })).json();
+    assert.match(unknownTool.error.message, /Unknown tool name: no_such_tool/, 'unknown-tool errors name the tool');
+    const emptyEnrich = await (await mcpCall({
+      jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'enrich_email_hops', arguments: { ips: [] } }
+    })).json();
+    assert.equal(emptyEnrich.result.isError, true, 'an empty enrichment is refused like its REST twin');
+    assert.match(emptyEnrich.result.content[0].text, /1 to 10 unique public/);
+    const notification = await mcpCall({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    assert.equal(notification.status, 202, 'notifications answer 202');
+    const batched = await mcpCall([{ jsonrpc: '2.0', id: 7, method: 'ping' }]);
+    assert.equal(batched.status, 400, 'batch requests are refused');
+    const badAccept = await fetch(base + '/mcp/v2', {
+      method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 8, method: 'ping' })
+    });
+    assert.equal(badAccept.status, 406, 'the Accept contract is enforced');
+
     // A trailing slash names the same resource, so wrong verbs still get the
     // route's own 405+Allow contract and HEAD probes stay available.
     const slashWrongVerb = await fetch(base + '/api/check/');
@@ -175,6 +220,21 @@ async function postResponse(path, body, headers = {}) {
     `MTA-STS policy fetch must succeed via manual redirect handling; got: ${worstCase.transport.policy?.error || 'no policy object'}`
   );
 
+  // Report lifecycle end-to-end: every response stores its own share row, so
+  // the analysis above must have minted a retrievable bearer link with the
+  // documented retrieval headers.
+  const shareId = worstCase.share?.id;
+  assert.match(shareId || '', /^[A-Za-z0-9_-]{16}$/, 'a completed domain check mints a bearer report id');
+  const storedGet = await fetch(base + `/api/reports/${shareId}`);
+  assert.equal(storedGet.status, 200);
+  assert.equal(storedGet.headers.get('cache-control'), 'private, no-store', 'stored reports are not cacheable');
+  assert.equal(storedGet.headers.get('x-report-retention-days'), '14');
+  assert.equal((await storedGet.json()).domain, worstCase.domain);
+  assert.equal((await fetch(base + `/api/reports/${shareId}`, { method: 'HEAD' })).status, 200, 'HEAD probes a live report');
+  const exported = await fetch(base + `/api/reports/${shareId}/export`);
+  assert.equal(exported.status, 200);
+  assert.match(exported.headers.get('content-disposition') || '', /^attachment; filename="email-security-gmail\.com\.json"$/);
+
   const current = await post('/api/records/validate', {
     type: 'dmarc', domain: '',
     record: 'v=DMARC1; p=reject; t=y; np=quarantine; psd=n; fo=0:1; rua=mailto:dmarc@example.com;'
@@ -226,6 +286,18 @@ async function postResponse(path, body, headers = {}) {
   assert.equal(oversizedResponse.status, 413);
   assert.equal(oversizedResponse.headers.get('access-control-allow-origin'), '*');
 
+  // Negative transport cases: malformed bodies answer the documented JSON
+  // envelope instead of an opaque failure.
+  const invalidJson = await fetch(base + '/api/check', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` },
+    body: '{not json'
+  });
+  assert.equal(invalidJson.status, 400, 'invalid JSON answers 400');
+  assert.match((await invalidJson.json()).error, /valid JSON/);
+  const wrongContentType = await postResponse('/api/check', { domain: 'example.com' }, { 'content-type': 'text/plain', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` });
+  assert.equal(wrongContentType.status, 200, 'bodies parse by content, not by content-type label');
+
   // Standard-limiter warmup: /api/header/analyze is the cheapest POST route
   // (stateless, no DNS), and record validation moved to the expensive class.
   const runToken = `${process.pid}-${Date.now()}`;
@@ -276,7 +348,7 @@ async function postResponse(path, body, headers = {}) {
   assert.match(expensiveLimited.headers.get('retry-after') || '', /^\d+$/);
   assert.equal(expensiveLimited.headers.get('access-control-allow-origin'), '*');
 
-  console.log(`Conformance corpus passed: ${evaluationCases.length + 12} cases plus request-boundary and rate-limit checks`);
+  console.log(`Conformance corpus passed: ${evaluationCases.length + 12} cases plus request-boundary, rate-limit, MCP, and report-lifecycle checks`);
 } finally {
   worker.kill('SIGTERM');
 }
