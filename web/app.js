@@ -689,6 +689,9 @@
 
     $("#spf-detail").innerHTML = html;
     spfReport.classList.remove("hidden");
+    // The inspector renders below the form; on a phone the finished report is
+    // off-screen, so completion scrolls it into view like the domain flow.
+    revealResults(spfReport);
 
     // Bind buttons
     $("#spf-detail [data-copy='original']").onclick = async (event) =>
@@ -1224,6 +1227,9 @@
 
     headerResults.innerHTML = html;
     headerError.classList.add("hidden");
+    // Same below-the-fold completion as the SPF inspector: bring the verdict
+    // to the user instead of hoping they scroll past the paste field.
+    revealResults(headerResults);
     announceAnalysis(`Header analysis complete. Verdict: ${summary.verdict}.`);
   }
 
