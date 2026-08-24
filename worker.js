@@ -368,7 +368,10 @@ async function handleRequest(request, env) {
     'Access-Control-Expose-Headers': 'MCP-Protocol-Version, X-Report-Retention-Days'
   };
 
-  if (request.method === 'OPTIONS') {
+  // MCP paths answer their own preflight with the narrower header contract
+  // mcp.js advertises (POST, OPTIONS only); everything else shares the
+  // global preflight below.
+  if (request.method === 'OPTIONS' && !MCP_PATHS.has(url.pathname)) {
     return new Response(null, { headers: { ...securityHeaders, ...corsHeaders, 'Access-Control-Max-Age': '600' } });
   }
 
@@ -544,7 +547,9 @@ async function handleRequest(request, env) {
     } catch (err) {
       const limited = bodyLimitResponse(err, corsHeaders);
       if (limited) return limited;
-      return requestErrorResponse(err, corsHeaders, 503);
+      // Unexpected exceptions are server faults (500); 503 is reserved for
+      // the known dependency outages that name themselves elsewhere.
+      return requestErrorResponse(err, corsHeaders, 500);
     }
   }
 
@@ -667,7 +672,9 @@ async function handleRequest(request, env) {
       const batchReport = await createBatchReport(domains, env, requestBudget);
       return jsonResponse(batchReport, 200, corsHeaders);
     } catch (err) {
-      return requestErrorResponse(err, corsHeaders, 503);
+      // Same status policy as every analysis route: validation failures keep
+      // their 400/413, unexpected exceptions are a server fault (500).
+      return requestErrorResponse(err, corsHeaders, 500);
     }
   }
 

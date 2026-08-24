@@ -75,6 +75,13 @@ async function postResponse(path, body, headers = {}) {
     });
     assert.equal(postUnknownApi.status, 404, 'unrouted POST paths answer 404 without reaching a limiter');
 
+    // MCP paths speak their own preflight contract (POST, OPTIONS) instead
+    // of inheriting the REST surface's global CORS advertisement.
+    const mcpPreflight = await fetch(base + '/mcp/v2', { method: 'OPTIONS' });
+    assert.equal(mcpPreflight.status, 204, 'MCP answers its own preflight');
+    assert.equal(mcpPreflight.headers.get('access-control-allow-methods'), 'POST, OPTIONS');
+    assert.equal((await fetch(base + '/api/check', { method: 'OPTIONS' })).headers.get('access-control-allow-methods'), 'GET, POST, OPTIONS', 'REST keeps the global preflight');
+
   const evaluationCases = [
     ['IPv4 pass', 'v=spf1 ip4:192.0.2.0/24 -all', '192.0.2.44', 'pass'],
     ['IPv4 fail', 'v=spf1 ip4:192.0.2.0/24 -all', '198.51.100.7', 'fail'],

@@ -181,7 +181,7 @@ test("POST rate limiting classifies expensive paths, preserves CORS, and bypasse
   assert.match(worker, /request\.method === 'POST'.*MCP_PATHS\.has\(url\.pathname\)/);
   assert.match(worker, /await limiter\.limit\(\{ key: client \}\)/);
   assert.match(worker, /429,\s*\{ \.\.\.corsHeaders, 'Retry-After': String\(retryAfter\) \}/);
-  assert.match(worker, /if \(request\.method === 'OPTIONS'\)/);
+  assert.match(worker, /if \(request\.method === 'OPTIONS' && !MCP_PATHS\.has\(url\.pathname\)\)/);
   assert.match(worker, /url\.pathname === '\/api\/health' && \(request\.method === 'GET' \|\| request\.method === 'HEAD'\)/);
   assert.match(worker, /CF-Connecting-IP.*anonymous/);
 });
@@ -316,6 +316,22 @@ test("the POST rate-limit gate charges only paths a POST can actually reach", ()
   assert.ok(gate.length > 0, "rate-limit gate must exist");
   assert.match(gate, /POST_API_PATHS\.has\(url\.pathname\) \|\| MCP_PATHS\.has\(url\.pathname\)/);
   assert.doesNotMatch(gate, /startsWith\('\/api\/'\)/);
+});
+
+test("unexpected analysis failures answer 500 while dependency outages keep 503", () => {
+  // Status policy: an unexpected exception is a server fault (500); 503 is
+  // reserved for the named dependency outages (rate limiter, D1 accounting,
+  // report storage). The batch and SPF-inspect fallbacks once answered 503
+  // for plain bugs, blurring that distinction.
+  assert.match(
+    worker,
+    /url\.pathname === '\/api\/batch' && request\.method === 'POST'[\s\S]{0,600}requestErrorResponse\(err, corsHeaders, 500\)/
+  );
+  const inspectBlock = worker.slice(
+    worker.indexOf("url.pathname === '/api/spf/inspect' && request.method === 'POST'"),
+    worker.indexOf("url.pathname === '/api/spf/evaluate'")
+  );
+  assert.ok(inspectBlock.includes("requestErrorResponse(err, corsHeaders, 500)"), "inspect fallback must be a server-fault 500");
 });
 
 test("the MCP enrich tool enforces the same unique-public-IP contract as REST", () => {
