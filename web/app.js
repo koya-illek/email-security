@@ -932,10 +932,20 @@
   let spfValidationTimer = 0;
   let dmarcValidationTimer = 0;
 
+  // Marks a validation attempt that never produced a judgment: transport
+  // failure or an HTTP-error envelope. A good record must not wear the
+  // "Invalid record" label just because its validation answer got lost.
+  class ValidationUnavailable extends Error {
+    constructor(reason) {
+      super(reason || "the validation service could not be reached");
+    }
+  }
+
   // A validation answer is only trustworthy when it carries the validation
   // shape. HTTP-error envelopes ({error}, e.g. a record body over the API's
-  // 16 KiB cap) and non-JSON pages must land in showValidation's blocked
-  // branch, never in its "Valid record" branch with copying enabled.
+  // 16 KiB cap) and non-JSON pages throw ValidationUnavailable so they land
+  // in the unavailable branch, never in the "Valid record" branch with
+  // copying enabled and never in the "Invalid record" branch either.
   async function requestRecordValidation(type, domain, record) {
     const response = await fetch(`${API_BASE}/api/records/validate`, {
       method: "POST",
@@ -949,10 +959,18 @@
       payload = null;
     }
     if (!response.ok || !payload || typeof payload !== "object" || payload.error || !Array.isArray(payload.errors)) {
-      const reason = payload?.error || `HTTP ${response.status}`;
-      return { errors: [`This record could not be validated (${reason}).`], warnings: [] };
+      throw new ValidationUnavailable(payload?.error || `HTTP ${response.status}`);
     }
     return payload;
+  }
+
+  function showValidationUnavailable(root, error) {
+    const box = root.querySelector(".validation-result");
+    const button = root.querySelector(".copy-btn");
+    const reason = error instanceof ValidationUnavailable ? error.message : "the request could not be completed";
+    box.innerHTML = `<div class="notice info"><strong>Validation unavailable</strong>This record was not judged (${esc(reason)}). Editing any field retries the validation.</div>`;
+    button.textContent = "Validation unavailable";
+    button.disabled = true;
   }
 
   function scheduleSpfValidation(sequence, root, extra, domain, record) {
@@ -964,9 +982,9 @@
         const validation = await requestRecordValidation("spf", domain, record);
         if (sequence !== spfValidationSequence) return;
         showValidation(root, validation, extra, record, "spf");
-      } catch {
+      } catch (err) {
         if (sequence === spfValidationSequence)
-          showValidation(root, { errors: ["Validation service could not confirm this record."], warnings: [] }, extra, record, "spf");
+          showValidationUnavailable(root, err);
       }
     }, VALIDATION_DEBOUNCE_MS);
   }
@@ -1015,9 +1033,9 @@
         const validation = await requestRecordValidation("dmarc", domain, record);
         if (sequence !== dmarcValidationSequence) return;
         showValidation(root, validation, extra, record, "dmarc");
-      } catch {
+      } catch (err) {
         if (sequence === dmarcValidationSequence)
-          showValidation(root, { errors: ["Validation service could not confirm this record."], warnings: [] }, extra, record, "dmarc");
+          showValidationUnavailable(root, err);
       }
     }, VALIDATION_DEBOUNCE_MS);
   }

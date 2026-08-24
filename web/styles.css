@@ -625,6 +625,13 @@ textarea:focus-visible {
   background: rgba(173, 155, 255, .06);
   color: #a7d9b8;
 }
+/* A determinate-but-unjudged state (validation outage, record absence):
+   informational, deliberately not the warning amber or error red. */
+.notice.info {
+  border-color: rgba(126, 188, 255, .35);
+  background: rgba(126, 188, 255, .06);
+  color: #b8d4f2;
+}
 .notice strong { display: block; margin-bottom: 3px; }
 
 .noscript-note {
