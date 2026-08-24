@@ -782,3 +782,86 @@ test('re-triggering SPF inspection from a report sends exactly one request', asy
   await expect(page.locator('#spf-report')).toBeVisible({ timeout: 5_000 });
   await expect.poll(() => inspectRequests, { timeout: 2_000 }).toBe(1);
 });
+
+test('pasting a share link into an open tab loads the report without a reload', async ({ page }) => {
+  const report = domainReport('v=spf1 -all');
+  report.id = '1234567890abcdef';
+  await page.route('**/api/reports/1234567890abcdef', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(report)
+  }));
+
+  let loads = 0;
+  await page.goto('/');
+  await page.evaluate(() => {
+    window.__reloadGuard = true;
+  });
+  page.on('load', () => { loads++; });
+
+  await page.evaluate(() => { location.hash = '#1234567890abcdef'; });
+  await expect(page.locator('#domain-report')).toBeVisible();
+  await expect(page.locator('#report-domain')).toHaveText('example.com');
+  // Same-document navigation must not reload the page.
+  await page.waitForTimeout(200);
+  expect(await page.evaluate(() => window.__reloadGuard)).toBe(true);
+  expect(loads).toBe(0);
+
+  // A batch-prefixed link routes to the batch panel from the live tab too.
+  const batch = { _reportType: 'batch', id: 'abcdef1234567890', domains: ['example.com'], results: [{ domain: 'example.com', overall_score: 80, overall_status: 'good', spf: { status: 'pass' }, dkim: { status: 'warn' }, dmarc: { status: 'warn' }, mx: { status: 'pass' }, transport: { status: 'info' } }], created_at: '2026-08-14T00:00:00.000Z', share: { available: false } };
+  await page.route('**/api/reports/abcdef1234567890', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(batch)
+  }));
+  await page.evaluate(() => { location.hash = '#batch-abcdef1234567890'; });
+  await expect(page.locator('#batch-report')).toBeVisible();
+  await expect(page.locator('#batch-table')).toContainText('example.com');
+});
+
+test('a batch-row click during an active domain check queues instead of dropping', async ({ page }) => {
+  // The row button seeds #domain-input programmatically, which fires no input
+  // event; the older request must drain and the newer one must still run and
+  // render under its own domain rather than being silently discarded.
+  const requests = [];
+  let releaseFirst;
+  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  await page.route('**/api/check', async route => {
+    const body = JSON.parse(route.request().postData());
+    requests.push(body.domain);
+    if (requests.length === 1) await firstGate;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ...domainReport('v=spf1 -all'), domain: body.domain })
+    });
+  });
+  await page.route('**/api/batch', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      _reportType: 'batch',
+      domains: ['slow.example', 'fast.example'],
+      results: [
+        { domain: 'slow.example', overall_score: 50, overall_status: 'fair', spf: { status: 'pass' }, dkim: { status: 'info' }, dmarc: { status: 'info' }, mx: { status: 'info' }, transport: { status: 'info' } },
+        { domain: 'fast.example', overall_score: 60, overall_status: 'fair', spf: { status: 'pass' }, dkim: { status: 'info' }, dmarc: { status: 'info' }, mx: { status: 'info' }, transport: { status: 'info' } }
+      ],
+      created_at: '2026-08-23T00:00:00.000Z',
+      validation: { accepted: ['slow.example', 'fast.example'], rejected: [] },
+      share: { available: false }
+    })
+  }));
+
+  await page.goto('/#batch');
+  await page.getByLabel('Domains (one per line, max 3)').fill('slow.example\nfast.example');
+  await page.getByRole('button', { name: 'Check All Domains' }).click();
+  await expect(page.locator('#batch-table')).toBeVisible();
+
+  // Start a slow check, return to the batch table, then click the
+  // fast.example row while the first check is still in flight.
+  await page.locator('.batch-domain-button', { hasText: 'slow.example' }).click();
+  await expect(page.locator('#domain-loading')).toBeVisible();
+  await page.getByRole('tab', { name: 'Batch Check' }).click();
+  await page.locator('.batch-domain-button', { hasText: 'fast.example' }).click();
+
+  releaseFirst();
+  await expect(page.locator('#report-domain')).toHaveText('fast.example');
+  await expect(page.locator('#domain-input')).toHaveValue('fast.example');
+  await expect.poll(() => requests).toEqual(['slow.example', 'fast.example']);
+});

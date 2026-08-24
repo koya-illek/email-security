@@ -237,7 +237,12 @@
   });
 
   // ─── Load shared report from D1 ───────────────────────────────
+  // A second link opened while one is loading must win; the loser's panels
+  // and render are abandoned when its sequence number is stale.
+  let sharedReportSequence = 0;
   async function loadSharedReport(reportId, options = {}) {
+    const sequence = ++sharedReportSequence;
+    const stale = () => sequence !== sharedReportSequence;
     // The #batch- prefix is a hint for which panel owns failures and the
     // loading spinner; success always dispatches on the stored _reportType.
     const preferBatch = options.prefer === "batch";
@@ -251,6 +256,7 @@
     try {
       const r = await fetch(`${API_BASE}/api/reports/${reportId}`);
       const d = await parseApiResponse(r, "report");
+      if (stale()) return;
       if (!r.ok || d.error) throw new Error(d.error || "Report not found or expired");
       if (d._reportType === "batch") {
         // Share links may lose their #batch- prefix; dispatch on the stored
@@ -265,6 +271,7 @@
         showDomainResults(d);
       }
     } catch (err) {
+      if (stale()) return;
       const message = err?.message || "Failed to load shared report";
       if (preferBatch) {
         batchErrorMsg.textContent = message;
@@ -275,7 +282,7 @@
         selectTool("domain", false);
       }
     } finally {
-      loadingPanel.classList.add("hidden");
+      if (!stale()) loadingPanel.classList.add("hidden");
     }
   }
 
@@ -292,6 +299,7 @@
 
   const domainGeneration = createGeneration();
   let domainCheckInFlight = false;
+  let domainCheckPromise = null;
 
   // Editing the field orphans the in-flight answer: when the response lands,
   // the generation mismatch stops it from rendering under a different domain.
@@ -303,32 +311,36 @@
     if (!domain || domainCheckInFlight) return;
     // Trigger paths (batch-row buttons) call requestSubmit(), which runs this
     // handler even with the submit button disabled; the flag keeps those
-    // activations serial.
+    // activations serial and exposes the running request so triggers can
+    // queue behind it instead of being dropped.
     domainCheckInFlight = true;
     const generation = domainGeneration.current();
     domainLoading.classList.remove("hidden");
     domainError.classList.add("hidden");
     domainReport.classList.add("hidden");
     checkButton.disabled = true;
-    try {
-      const r = await fetch(`${API_BASE}/api/check`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain }),
-      });
-      const d = await parseApiResponse(r, "domain check");
-      if (generation !== domainGeneration.current()) return;
-      if (d.error) showDomainError(d.error);
-      else showDomainResults(d);
-    } catch (err) {
-      if (generation === domainGeneration.current()) {
-        showDomainError(err.message || "Failed to analyze domain");
+    domainCheckPromise = (async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/check`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domain }),
+        });
+        const d = await parseApiResponse(r, "domain check");
+        if (generation !== domainGeneration.current()) return;
+        if (d.error) showDomainError(d.error);
+        else showDomainResults(d);
+      } catch (err) {
+        if (generation === domainGeneration.current()) {
+          showDomainError(err.message || "Failed to analyze domain");
+        }
+      } finally {
+        domainCheckInFlight = false;
+        domainLoading.classList.add("hidden");
+        checkButton.disabled = false;
+        domainCheckPromise = null;
       }
-    } finally {
-      domainCheckInFlight = false;
-      domainLoading.classList.add("hidden");
-      checkButton.disabled = false;
-    }
+    })();
   });
 
   $("#new-check")?.addEventListener("click", () => {
@@ -337,12 +349,22 @@
     domainInput.focus();
   });
 
-  $("#inspect-from-report")?.addEventListener("click", () => {
-    if (lastDomainReport) {
-      $("#spf-domain-input").value = lastDomainReport.domain;
-      selectTool("spf");
-      $("#spf-form").requestSubmit();
-    }
+  // Programmatic seeding (these buttons and the batch-table rows) never fires
+  // the field's input listener, so the trigger advances its flow's generation
+  // itself, waits out any request still running under the serial in-flight
+  // guard, and only submits while the seeded value is still what the field
+  // holds. Without this, a click during an active check silently dropped the
+  // new request and the stale answer rendered beneath the new domain.
+  $("#inspect-from-report")?.addEventListener("click", async () => {
+    if (!lastDomainReport) return;
+    const domain = lastDomainReport.domain;
+    spfInput.value = domain;
+    spfInspectGeneration.next();
+    selectTool("spf");
+    const pending = spfInspectPromise;
+    if (pending) await pending.catch(() => {});
+    if (spfInput.value !== domain) return;
+    $("#spf-form").requestSubmit();
   });
 
   $("#build-from-report")?.addEventListener("click", () => {
@@ -540,6 +562,7 @@
 
   const spfInspectGeneration = createGeneration();
   let spfInspectInFlight = false;
+  let spfInspectPromise = null;
 
   spfInput?.addEventListener("input", () => spfInspectGeneration.next());
 
@@ -548,32 +571,36 @@
     const domain = spfInput.value.trim();
     if (!domain || spfInspectInFlight) return;
     // requestSubmit() from "Inspect SPF" runs this handler even while the
-    // submit button is disabled; the flag stops duplicate racing requests.
+    // submit button is disabled; the flag stops duplicate racing requests and
+    // exposes the running one so the trigger path can queue behind it.
     spfInspectInFlight = true;
     const generation = spfInspectGeneration.current();
     spfLoading.classList.remove("hidden");
     spfError.classList.add("hidden");
     spfReport.classList.add("hidden");
     spfButton.disabled = true;
-    try {
-      const r = await fetch(`${API_BASE}/api/spf/inspect`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain }),
-      });
-      const d = await parseApiResponse(r, "SPF inspection");
-      if (generation !== spfInspectGeneration.current()) return;
-      if (d.error) showSpfError(d.error);
-      else showSpfInspector(d);
-    } catch (err) {
-      if (generation === spfInspectGeneration.current()) {
-        showSpfError(err.message || "Failed to inspect SPF");
+    spfInspectPromise = (async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/spf/inspect`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domain }),
+        });
+        const d = await parseApiResponse(r, "SPF inspection");
+        if (generation !== spfInspectGeneration.current()) return;
+        if (d.error) showSpfError(d.error);
+        else showSpfInspector(d);
+      } catch (err) {
+        if (generation === spfInspectGeneration.current()) {
+          showSpfError(err.message || "Failed to inspect SPF");
+        }
+      } finally {
+        spfInspectInFlight = false;
+        spfLoading.classList.add("hidden");
+        spfButton.disabled = false;
+        spfInspectPromise = null;
       }
-    } finally {
-      spfInspectInFlight = false;
-      spfLoading.classList.add("hidden");
-      spfButton.disabled = false;
-    }
+    })();
   });
 
   function showSpfError(msg) {
@@ -1419,13 +1446,19 @@
 
     // Use a real button for keyboard and assistive-technology access.
     batchTable.querySelectorAll(".batch-domain-button").forEach(button => {
-      button.addEventListener("click", () => {
+      button.addEventListener("click", async () => {
         const domain = button.dataset.domain;
-        if (domain) {
-          domainInput.value = domain;
-          selectTool("domain");
-          checkForm.requestSubmit();
-        }
+        if (!domain) return;
+        domainInput.value = domain;
+        // Orphan any in-flight answer for the previously checked domain, let
+        // its request drain so the serial guard releases, then submit only
+        // while the seeded value still stands.
+        domainGeneration.next();
+        selectTool("domain");
+        const pending = domainCheckPromise;
+        if (pending) await pending.catch(() => {});
+        if (domainInput.value !== domain) return;
+        checkForm.requestSubmit();
       });
     });
   }
@@ -1490,5 +1523,24 @@
   if (batchHashMatch) {
     queueMicrotask(() => loadSharedReport(batchHashMatch[1], { prefer: "batch" }));
   }
+
+  // Share links are meant to be pasted into a tab that is already open, so
+  // hash changes route exactly like the boot dispatch: report ids load their
+  // stored report, tab names switch panels, everything else is ignored (the
+  // in-page #principles anchor among it). replaceState from tab clicks never
+  // fires this event, so the two paths cannot loop.
+  window.addEventListener("hashchange", () => {
+    const h = location.hash.slice(1);
+    const batchMatch = h.match(/^batch-([A-Za-z0-9_-]{16})$/);
+    if (batchMatch) {
+      loadSharedReport(batchMatch[1], { prefer: "batch" });
+      return;
+    }
+    if (/^[A-Za-z0-9_-]{16}$/.test(h)) {
+      loadSharedReport(h);
+      return;
+    }
+    if (knownTabs.includes(h)) selectTool(h, false);
+  });
 
 })();
