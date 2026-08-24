@@ -306,6 +306,9 @@
         updateBatchRejectedNote(d.validation);
         batchReport.classList.remove("hidden");
         selectTool("batch", false);
+        announceAnalysis(
+          `Stored batch comparison loaded. ${Array.isArray(d.results) ? d.results.length : 0} domains in the table.`
+        );
       } else {
         showDomainResults(d);
       }

@@ -63,7 +63,7 @@ The core is currently a single Worker module. The internal separation is logical
 
 1. The caller submits a normalized public domain.
 2. The router validates method, content type, request size, origin, domain syntax, and batch bounds.
-3. A request-wide budget reserves at most 45 outbound subrequests.
+3. A request-wide budget reserves at most 45 outbound subrequests and enforces a 20-second wall-clock ceiling; work past the deadline degrades to timeout states instead of stretching the request.
 4. DNS queries run through structured DNS over HTTPS. NODATA, NXDOMAIN, timeout, SERVFAIL, provider error, and budget exhaustion remain distinct states.
 5. SPF records are parsed case-insensitively. Includes and redirects are traversed within lookup, void, cycle, depth, and request budgets. A record whose terminal strength lives behind `redirect=` is judged by the redirect target's all-term; unresolvable targets fail closed, and sender-macro targets are disclosed as statically unverifiable instead of being queried literally.
 6. DMARC discovery follows the RFC 9989 tree walk. For records found at an ancestor domain, the effective policy applied to the checked domain is `sp=` when present, not the parent's `p=`.
@@ -106,7 +106,7 @@ MCP publishes `analyze_email_domain`, `analyze_email_headers`, `analyze_email_do
 | Cloudflare Workers and Assets | Runtime, custom domains, static site, request handling, and Cron | Normal service request metadata | Yes |
 | Cloudflare D1 | Shareable report storage and durable fallback quota state | Report JSON, expiry metadata, opaque IDs, one-way client fingerprints | Required for sharing |
 | Cloudflare Rate Limiting bindings | Edge abuse controls for standard and expensive routes | Cloudflare-managed request keys and counters | Production control |
-| Cloudflare Cache API | Caches repeated domain and PTR observations, durable MTA-STS observations, and authoritative PTR enrichment answers (fetched policies/answers or definitive DNS outcomes; transient failures stay uncached) | Internal cache keys and processed responses | Performance optimization |
+| Cloudflare Cache API | Caches repeated domain analyses (analysis only — never a requester's share id or expiry) and PTR observations, durable MTA-STS observations, and authoritative PTR enrichment answers (fetched policies/answers or definitive DNS outcomes; transient failures stay uncached) | Internal cache keys and processed responses | Performance optimization |
 | Cloudflare DNS over HTTPS | Primary DNS observations | Domain or address and record type | Yes |
 | Google Public DNS | Transient-error fallback and provider evidence | Domain or address and record type | Fallback |
 | Quad9 DNS over HTTPS | Additional transient-error fallback | Domain or address and record type | Fallback |
