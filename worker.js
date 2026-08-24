@@ -375,7 +375,9 @@ async function handleRequest(request, env) {
   // HEAD shares the GET response; the runtime strips the body, so uptime
   // probes that default to HEAD see a healthy service instead of a 404.
   if (url.pathname === '/api/health' && (request.method === 'GET' || request.method === 'HEAD')) {
-    return jsonResponse({ ok: true, service: 'email-security-checker', version: '2.0.0', source_revision: env.SOURCE_REVISION || 'unknown', liveness: true }, 200, securityHeaders);
+    // CORS applies here too: uptime dashboards and browser-based monitors
+    // outside this origin read the health answer just like any API client.
+    return jsonResponse({ ok: true, service: 'email-security-checker', version: '2.0.0', source_revision: env.SOURCE_REVISION || 'unknown', liveness: true }, 200, { ...securityHeaders, ...corsHeaders });
   }
 
   if ((url.pathname === '/api' || url.pathname === '/api/' || url.pathname === '/api/v2') && request.method === 'GET') {
@@ -605,10 +607,11 @@ async function handleRequest(request, env) {
 
   // GET /api/reports/:id — load a stored report. The id shape is validated
   // before any quota accounting: a malformed path can never reach storage,
-  // so it must not spend one of the caller's daily retrievals.
+  // so it must not spend one of the caller's daily retrievals. HEAD shares
+  // the GET response; the runtime strips the body.
   const reportMatch = url.pathname.match(/^\/api\/reports\/([A-Za-z0-9_-]+)(\/export)?$/);
   let validReportId = null;
-  if (request.method === 'GET' && reportMatch) {
+  if ((request.method === 'GET' || request.method === 'HEAD') && reportMatch) {
     const candidate = reportMatch[1];
     if (!REPORT_ID_RE.test(candidate)) {
       return jsonResponse({ error: 'Report not found' }, 404, corsHeaders);
@@ -689,6 +692,11 @@ async function handleRequest(request, env) {
   const apiRoute = API_ROUTE_METHODS.find(([path]) => path === url.pathname);
   if (apiRoute) {
     return jsonResponse({ error: `Method ${request.method} is not allowed for ${url.pathname}` }, 405, { ...corsHeaders, Allow: apiRoute[1].join(', ') });
+  }
+  // Report routes are dynamic, so they sit outside the static method table;
+  // wrong verbs still answer 405 with Allow like every other resource.
+  if (/^\/api\/reports\/[A-Za-z0-9_-]+(\/export)?$/.test(url.pathname) && request.method !== 'GET' && request.method !== 'HEAD') {
+    return jsonResponse({ error: `Method ${request.method} is not allowed for ${url.pathname}` }, 405, { ...corsHeaders, Allow: 'GET, HEAD' });
   }
   if (url.pathname.startsWith('/api/') || MCP_PATHS.has(url.pathname)) {
     return jsonResponse({ error: 'Not found' }, 404, corsHeaders);

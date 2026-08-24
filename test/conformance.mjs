@@ -46,20 +46,34 @@ async function postResponse(path, body, headers = {}) {
   });
 }
 
-try {
-  await waitForWorker();
-  assert.equal((await fetch(base, { method: 'HEAD' })).status, 200, 'HEAD serves the app shell');
-  assert.equal((await fetch(base + '/api/health', { method: 'HEAD' })).status, 200, 'HEAD probes the health endpoint');
+  try {
+    await waitForWorker();
+    assert.equal((await fetch(base, { method: 'HEAD' })).status, 200, 'HEAD serves the app shell');
+    assert.equal((await fetch(base + '/api/health', { method: 'HEAD' })).status, 200, 'HEAD probes the health endpoint');
+    const health = await fetch(base + '/api/health');
+    assert.equal(health.headers.get('access-control-allow-origin'), '*', 'health answers cross-origin monitors');
 
-  // Machine surfaces must answer with the documented JSON error envelope.
-  const wrongMethod = await fetch(base + '/api/check');
-  assert.equal(wrongMethod.status, 405, 'known API path hit with the wrong verb answers 405');
-  assert.equal(wrongMethod.headers.get('allow'), 'POST', 'Allow lists supported methods');
-  assert.match((await wrongMethod.json()).error, /Method GET is not allowed/, '405 body stays parseable JSON');
-  const unknownApi = await fetch(base + '/api/nope');
-  assert.equal(unknownApi.status, 404, 'unknown API paths answer 404');
-  assert.ok(unknownApi.headers.get('content-type').includes('application/json'), 'unknown API paths stay JSON');
-  assert.deepEqual(await unknownApi.json(), { error: 'Not found' });
+    // Machine surfaces must answer with the documented JSON error envelope.
+    const wrongMethod = await fetch(base + '/api/check');
+    assert.equal(wrongMethod.status, 405, 'known API path hit with the wrong verb answers 405');
+    assert.equal(wrongMethod.headers.get('allow'), 'POST', 'Allow lists supported methods');
+    assert.match((await wrongMethod.json()).error, /Method GET is not allowed/, '405 body stays parseable JSON');
+    const unknownApi = await fetch(base + '/api/nope');
+    assert.equal(unknownApi.status, 404, 'unknown API paths answer 404');
+    assert.ok(unknownApi.headers.get('content-type').includes('application/json'), 'unknown API paths stay JSON');
+    assert.deepEqual(await unknownApi.json(), { error: 'Not found' });
+
+    // Report routes are dynamic resources: wrong verbs get the same 405 +
+    // Allow contract as static routes, and unknown paths stay free of charge.
+    const wrongReportMethod = await fetch(base + '/api/reports/aaaaaaaaaaaaaaaa', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{}' });
+    assert.equal(wrongReportMethod.status, 405, 'report routes answer 405 for unsupported verbs');
+    assert.equal(wrongReportMethod.headers.get('allow'), 'GET, HEAD', 'Allow lists report retrieval methods');
+    const postUnknownApi = await fetch(base + '/api/nope', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` },
+      body: '{}'
+    });
+    assert.equal(postUnknownApi.status, 404, 'unrouted POST paths answer 404 without reaching a limiter');
 
   const evaluationCases = [
     ['IPv4 pass', 'v=spf1 ip4:192.0.2.0/24 -all', '192.0.2.44', 'pass'],
