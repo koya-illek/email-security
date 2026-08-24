@@ -1760,11 +1760,10 @@ async function analyzeSPF(domain, records, budget = null) {
       // checks validateSpfRecord applies. Without them a published record
       // like "ip4:1.2.3.0/24//64" would score a pass while receivers
       // permerror it, and the validate endpoint would contradict the report.
-      const family = clean.startsWith('ip4:') ? 'IPv4' : 'IPv6';
+      const isV4 = clean.startsWith('ip4:');
+      const family = isV4 ? 'IPv4' : 'IPv6';
       const value = clean.slice(4);
-      const valid = clean.startsWith('ip4:')
-        ? isValidIpv4Cidr(value)
-        : isValidIpv6Cidr(value);
+      const valid = isV4 ? isValidIpv4Cidr(value) : isValidIpv6Cidr(value);
       if (!valid) {
         invalidTerms.push(`${part} (the ${family} value "${value}" is not a valid address or prefix)`);
         continue;
@@ -2429,7 +2428,8 @@ function analyzeDMARC(records, discovery = {}) {
   }
 
   // Parse reporting
-  const rua = dmarcReportingState(tags).destinations;
+  const ruaState = dmarcReportingState(tags);
+  const rua = ruaState.destinations;
   const ruf = parseMailtoDestinations(tags.ruf);
 
   if (rua.length) {
@@ -2439,7 +2439,7 @@ function analyzeDMARC(records, discovery = {}) {
       detail: `Reports to: ${rua.join(', ')}`,
       recommendation: ''
     });
-  } else if (dmarcReportingState(tags).published) {
+  } else if (ruaState.published) {
     // A rua= tag exists but yielded no deliverable destination: claiming
     // "No rua= tag" would be factually wrong, while staying silent would
     // leave the owner waiting for reports no receiver can send.

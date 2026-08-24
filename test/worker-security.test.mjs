@@ -555,5 +555,5 @@ test("the scored SPF path applies the same value-level checks as the validator",
   assert.match(loop, /isValidIpv4Cidr\(value\)/);
   assert.match(loop, /isValidIpv6Cidr\(value\)/);
   assert.match(loop, /spfDualCidrError\(clean\)/);
-  assert.match(worker, /dmarcReportingState\(tags\)\.published/, "DMARC analysis must distinguish absent rua= from undeliverable rua=");
+  assert.match(worker, /ruaState\.published/, "DMARC analysis must distinguish absent rua= from undeliverable rua=");
 });
