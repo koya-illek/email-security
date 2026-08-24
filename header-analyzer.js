@@ -389,7 +389,6 @@ function buildArcSummary(headers) {
   }
 
   return {
-    present: true,
     counts: { authenticationResults: aarHeaders.length, messageSignature: amsHeaders.length, seal: sealHeaders.length },
     instances: { authenticationResults: aarInstances, messageSignature: amsInstances, seal: sealInstances },
     newestClaims

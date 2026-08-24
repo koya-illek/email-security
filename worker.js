@@ -2953,6 +2953,8 @@ function analyzeTransportSecurity(mtaStsRecords, tlsRptRecords, policyResult, mx
 // in mta-sts.js, shared with its behavioral unit suite. The matcher follows
 // RFC 8461 §4.1: a wildcard expands to exactly one label.
 
+// TLS-RPT rua= destinations stay here: unlike the MTA-STS policy document,
+// the URI grammar shares nothing with it beyond DNS discovery.
 function isValidTlsRptUri(value) {
   if (/^mailto:[^@\s,]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(value)) return true;
   try {
