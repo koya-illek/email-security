@@ -793,7 +793,9 @@
   }
 
   function validBuilderDomain(value) {
-    return /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i.test(value);
+    // Mirrors the server's most common refusal: consecutive dots.
+    return !String(value || "").includes("..") &&
+      /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i.test(value);
   }
 
   function showValidation(root, validation, extraErrors, record, type) {
@@ -1355,24 +1357,23 @@
     updateBatchCount(lines.length);
   });
 
-  let batchOverLimitAnnounced = false;
+  // Announce whenever the over-limit message itself changes (crossing into
+  // over-limit, or the extra count changing); identical repeats stay silent.
+  let batchOverLimitMessage = null;
   function updateBatchCount(count) {
     const extra = count - BATCH_MAX_DOMAINS_UI;
     const over = extra > 0;
     batchCount.textContent = `${Math.min(count, BATCH_MAX_DOMAINS_UI)} / ${BATCH_MAX_DOMAINS_UI} domains` +
       (over ? ` — ${extra} extra line${extra === 1 ? "" : "s"} rejected` : "");
     batchCount.classList.toggle("over-limit", over);
-    // The visible counter is silent per keystroke; only crossing the limit
-    // is announced, so screen-reader users learn about the rejection the
-    // moment it starts applying instead of at submit time.
     const status = $("#batch-count-status");
     if (!status) return;
-    if (over && !batchOverLimitAnnounced) {
-      status.textContent = `${extra} line${extra === 1 ? "" : "s"} ${extra === 1 ? "exceeds" : "exceed"} the ${BATCH_MAX_DOMAINS_UI}-domain limit and will be rejected.`;
-      batchOverLimitAnnounced = true;
-    } else if (!over) {
-      status.textContent = "";
-      batchOverLimitAnnounced = false;
+    const message = over
+      ? `${extra} line${extra === 1 ? "" : "s"} ${extra === 1 ? "exceeds" : "exceed"} the ${BATCH_MAX_DOMAINS_UI}-domain limit and will be rejected.`
+      : "";
+    if (message !== batchOverLimitMessage) {
+      status.textContent = message;
+      batchOverLimitMessage = message;
     }
   }
 
