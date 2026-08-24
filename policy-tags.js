@@ -131,15 +131,21 @@ function spfTermSyntaxError(term) {
 
 // RFC 9989: when discovery finds the record at an ancestor policy
 // domain, receivers apply its sp= value to this author domain when present,
-// falling back to p=. Scoring a subdomain by the parent's p= would report
-// enforcement that does not exist (for example p=reject; sp=none parents).
+// falling back to p=. Values are normalized here so the returned policy is
+// always one of the lowercase literals the scorer and frontend compare
+// against, whatever casing the published record used.
 function effectiveDmarcPolicy(tags, inherited) {
-  if (inherited && DMARC_POLICY_VALUES.includes(tags.sp)) return tags.sp;
-  return tags.p || null;
+  const sp = String(tags.sp || '').toLowerCase();
+  if (inherited && DMARC_POLICY_VALUES.includes(sp)) return sp;
+  return String(tags.p || '').toLowerCase() || null;
 }
 
-// Generic lowercase tag=value parser shared by DMARC records, DKIM
-// signatures, MTA-STS/TLS-RPT records, and scoring's key inspection.
+// Generic tag=value parser shared by DMARC records, DKIM signatures,
+// MTA-STS/TLS-RPT records, and scoring's key inspection. Tag names are
+// lowercased for lookup; values keep their original casing — a DKIM p=
+// base64 payload is case-sensitive (lowercasing it silently corrupts the
+// DER parse), and RFC 7489/8460 tag values are literal ABNF strings.
+// Comparison sites normalize explicitly, exactly like validateDmarcRecord.
 function parseTagRecord(record) {
   return Object.fromEntries(
     String(record || '')
@@ -148,7 +154,7 @@ function parseTagRecord(record) {
       .filter(Boolean)
       .map(part => {
         const idx = part.indexOf('=');
-        return idx > 0 ? [part.slice(0, idx).trim().toLowerCase(), part.slice(idx + 1).trim().toLowerCase()] : [part.toLowerCase(), ''];
+        return idx > 0 ? [part.slice(0, idx).trim().toLowerCase(), part.slice(idx + 1).trim()] : [part.toLowerCase(), ''];
       })
   );
 }

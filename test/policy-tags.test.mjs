@@ -12,8 +12,10 @@ const {
   isDmarcVersionRecord,
   effectiveDmarcPolicy,
   isValidSpfDomainSpec,
-  spfTermSyntaxError
+  spfTermSyntaxError,
+  parseTagRecord
 } = require("../policy-tags.js");
+const { estimateDkimKeyBits } = require("../scoring.js");
 
 test("inherited DMARC records apply sp= instead of the parent's p=", () => {
   // RFC 7489 §6.6.3: receivers enforce sp= against subdomains when present.
@@ -107,4 +109,23 @@ test("the domain-spec validator enforces the RFC 7208 §7 macro grammar", () => 
 test("qualified redirects consume no evaluation lookup", () => {
   assert.equal(countVisibleSpfLookups(["+redirect=_x.example"]), 0);
   assert.equal(countVisibleSpfLookups(["redirect=_x.example"]), 1);
+});
+
+test("parseTagRecord lowercases tag names but preserves value casing", () => {
+  const tags = parseTagRecord("v=DKIM1; K=RSA; p=MIIBIgJj/ABC+def=");
+  assert.equal(tags.v, "DKIM1");
+  assert.equal(tags.k, "RSA");
+  // Base64 is case-sensitive: lowercasing the p= value silently corrupts
+  // every byte-exact consumer (the DER modulus parse).
+  assert.equal(tags.p, "MIIBIgJj/ABC+def=");
+});
+
+test("a real DKIM key keeps its exact bit length through parseTagRecord", () => {
+  // Regression: values were lowercased before estimateDkimKeyBits ran, so
+  // every RSA key read as null and weak-key detection never fired.
+  const { generateKeyPairSync } = require("node:crypto");
+  const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 1024 });
+  const record = "v=DKIM1; k=rsa; p=" + publicKey.export({ type: "spki", format: "der" }).toString("base64");
+  const parsed = parseTagRecord(record);
+  assert.equal(estimateDkimKeyBits(parsed.p), 1024);
 });

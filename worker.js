@@ -1397,13 +1397,13 @@ async function discoverDmarcPolicy(domain, budget = null) {
       if (offset === 0) {
         return { records, policyDomain: candidate, inherited: false, queries, dns: dnsState(records) };
       }
-      if (['y', 'n'].includes(found.at(-1).tags.psd)) break;
+      if (['y', 'n'].includes(String(found.at(-1).tags.psd || '').toLowerCase())) break;
     }
   }
   if (found.length) {
     const highest = found.at(-1);
     let selected = highest;
-    if (highest.tags.psd === 'y') {
+    if (String(highest.tags.psd || '').toLowerCase() === 'y') {
       const psdOffset = labels.length - highest.domain.split('.').length;
       const organisationalDomain = labels.slice(Math.max(0, psdOffset - 1)).join('.');
       selected = found.find(item => item.domain === organisationalDomain) || highest;
@@ -2329,7 +2329,7 @@ function analyzeDMARC(records, discovery = {}) {
   // domain is sp= when present (RFC 7489 §6.6.3), not the parent's p=.
   const publishedPolicy = tags.p || null;
   const inheritedRecord = Boolean(discovery.inherited);
-  const usingSp = inheritedRecord && DMARC_POLICY_VALUES.includes(tags.sp);
+  const usingSp = inheritedRecord && DMARC_POLICY_VALUES.includes(String(tags.sp || '').toLowerCase());
   const policy = effectiveDmarcPolicy(tags, inheritedRecord);
 
   if (policy === 'none') {
@@ -2405,14 +2405,17 @@ function analyzeDMARC(records, discovery = {}) {
       recommendation: 'Remove pct=. Use t=y for a testing policy when required.'
     });
   }
-  if (tags.t) checks.push({
-    status: tags.t === 'y' ? 'warn' : tags.t === 'n' ? 'info' : 'fail',
-    title: tags.t === 'y' ? 'Testing policy (t=y)' : tags.t === 'n' ? 'Production policy (t=n)' : 'Invalid t= tag',
-    detail: tags.t === 'y' ? 'RFC 9989 testing mode is requested.' : `t=${tags.t}`,
-    recommendation: tags.t === 'y' ? 'Move to t=n or omit t= after report review.' : ''
-  });
+  if (tags.t) {
+    const testing = String(tags.t || '').toLowerCase();
+    checks.push({
+      status: testing === 'y' ? 'warn' : testing === 'n' ? 'info' : 'fail',
+      title: testing === 'y' ? 'Testing policy (t=y)' : testing === 'n' ? 'Production policy (t=n)' : 'Invalid t= tag',
+      detail: testing === 'y' ? 'RFC 9989 testing mode is requested.' : `t=${tags.t}`,
+      recommendation: testing === 'y' ? 'Move to t=n or omit t= after report review.' : ''
+    });
+  }
   if (tags.np) checks.push({
-    status: ['none', 'quarantine', 'reject'].includes(tags.np) ? 'info' : 'fail',
+    status: ['none', 'quarantine', 'reject'].includes(String(tags.np || '').toLowerCase()) ? 'info' : 'fail',
     title: `Non-existent subdomain policy: ${tags.np}`,
     detail: `RFC 9989 np=${tags.np} applies to non-existent subdomains.`,
     recommendation: ''
@@ -2424,11 +2427,12 @@ function analyzeDMARC(records, discovery = {}) {
   if (usingSp) {
     // covered by the effective-policy checks above
   } else if (tags.sp) {
-    const weakerSubdomainPolicy = publishedPolicy !== 'none' && tags.sp === 'none';
+    const spPolicy = String(tags.sp || '').toLowerCase();
+    const weakerSubdomainPolicy = policy !== 'none' && spPolicy === 'none';
     checks.push({
-      status: ['none', 'quarantine', 'reject'].includes(tags.sp) ? (weakerSubdomainPolicy ? 'warn' : 'info') : 'fail',
+      status: ['none', 'quarantine', 'reject'].includes(spPolicy) ? (weakerSubdomainPolicy ? 'warn' : 'info') : 'fail',
       title: `Subdomain policy: ${tags.sp}`,
-      detail: `Subdomains use: ${tags.sp}`,
+      detail: `Subdomains use: ${spPolicy}`,
       recommendation: weakerSubdomainPolicy ? 'Use sp=quarantine or sp=reject if subdomains should be protected too.' : ''
     });
   } else if (policy === 'reject' || policy === 'quarantine') {
@@ -2440,20 +2444,24 @@ function analyzeDMARC(records, discovery = {}) {
     });
   }
 
+  // Alignment modes are literal r/s values; casing is tolerated the way the
+  // record validator tolerates it.
   if (tags.adkim) {
+    const mode = String(tags.adkim || '').toLowerCase();
     checks.push({
-      status: ['r', 's'].includes(tags.adkim) ? 'info' : 'fail',
-      title: `DKIM alignment: ${tags.adkim === 's' ? 'strict' : tags.adkim === 'r' ? 'relaxed' : 'invalid'}`,
-      detail: tags.adkim === 's' ? 'DKIM signing domain must exactly match the From domain.' : tags.adkim === 'r' ? 'DKIM can align at the organisational domain.' : `Invalid adkim=${tags.adkim}.`,
-      recommendation: ['r', 's'].includes(tags.adkim) ? '' : 'Use adkim=r or adkim=s.'
+      status: ['r', 's'].includes(mode) ? 'info' : 'fail',
+      title: `DKIM alignment: ${mode === 's' ? 'strict' : mode === 'r' ? 'relaxed' : 'invalid'}`,
+      detail: mode === 's' ? 'DKIM signing domain must exactly match the From domain.' : mode === 'r' ? 'DKIM can align at the organisational domain.' : `Invalid adkim=${tags.adkim}.`,
+      recommendation: ['r', 's'].includes(mode) ? '' : 'Use adkim=r or adkim=s.'
     });
   }
   if (tags.aspf) {
+    const mode = String(tags.aspf || '').toLowerCase();
     checks.push({
-      status: ['r', 's'].includes(tags.aspf) ? 'info' : 'fail',
-      title: `SPF alignment: ${tags.aspf === 's' ? 'strict' : tags.aspf === 'r' ? 'relaxed' : 'invalid'}`,
-      detail: tags.aspf === 's' ? 'Return-Path domain must exactly match the From domain.' : tags.aspf === 'r' ? 'SPF can align at the organisational domain.' : `Invalid aspf=${tags.aspf}.`,
-      recommendation: ['r', 's'].includes(tags.aspf) ? '' : 'Use aspf=r or aspf=s.'
+      status: ['r', 's'].includes(mode) ? 'info' : 'fail',
+      title: `SPF alignment: ${mode === 's' ? 'strict' : mode === 'r' ? 'relaxed' : 'invalid'}`,
+      detail: mode === 's' ? 'Return-Path domain must exactly match the From domain.' : mode === 'r' ? 'SPF can align at the organisational domain.' : `Invalid aspf=${tags.aspf}.`,
+      recommendation: ['r', 's'].includes(mode) ? '' : 'Use aspf=r or aspf=s.'
     });
   }
 
@@ -2534,7 +2542,11 @@ function analyzeDKIM(results) {
         recommendation: 'Remove t=y when DKIM signing is ready for production.'
       });
     }
-    const keyType = tags.k || (record.includes('k=rsa') ? 'rsa' : 'rsa');
+    // RFC 6376 key types are literal lowercase values, but published
+    // records are sloppy in the wild; the validator tolerates casing and so
+    // does the analysis. The p= value itself must NOT be normalized — the
+    // DER parse is byte-exact and base64 is case-sensitive.
+    const keyType = String(tags.k || 'rsa').toLowerCase();
     if (keyType === 'rsa') {
       const keyBits = estimateDkimKeyBits(tags.p || '');
       checks.push({
