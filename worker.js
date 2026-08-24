@@ -80,6 +80,22 @@ const EXPENSIVE_POST_PATHS = new Set([
   '/mcp/v2'
 ]);
 const MCP_PATHS = new Set(['/mcp', '/mcp/v2']);
+// Every REST path a POST can actually reach. The rate-limit gate matches
+// against this set so an unknown path answers 404 without spending any of
+// the caller's daily or per-minute budget — the same ordering the report
+// retrieval route applies to its own quota.
+const POST_API_PATHS = new Set([
+  '/api/check',
+  '/api/v2/domain-check',
+  '/api/header/analyze',
+  '/api/v2/header-analysis',
+  '/api/header/enrich',
+  '/api/spf/inspect',
+  '/api/spf/evaluate',
+  '/api/records/validate',
+  '/api/v2/record-build',
+  '/api/batch'
+]);
 
 // Every routed API path with the methods it serves. Anything else claiming
 // to be an API surface gets a parseable JSON failure instead of falling
@@ -375,7 +391,7 @@ async function handleRequest(request, env) {
     }, 200, { ...securityHeaders, ...corsHeaders });
   }
 
-  if (request.method === 'POST' && ((url.pathname.startsWith('/api/') && url.pathname !== '/api/health') || MCP_PATHS.has(url.pathname))) {
+  if (request.method === 'POST' && (POST_API_PATHS.has(url.pathname) || MCP_PATHS.has(url.pathname))) {
     let retryAfter;
     try {
       const dailySuccess = await consumeDailyRateLimit(request, env, 'post', Number(env.DAILY_POST_LIMIT) || 500);

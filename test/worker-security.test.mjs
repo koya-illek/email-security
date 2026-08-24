@@ -305,6 +305,19 @@ test("malformed report ids are refused before spending daily retrieval quota", (
   assert.ok(validateAt < quotaAt, "id validation must precede quota consumption");
 });
 
+test("the POST rate-limit gate charges only paths a POST can actually reach", () => {
+  // An unknown path must answer 404 without burning daily or per-minute
+  // quota; the gate therefore matches routed POST paths explicitly instead
+  // of any /api/* prefix.
+  const gate = worker.slice(
+    worker.indexOf("if (request.method === 'POST' && (POST_API_PATHS.has(url.pathname)"),
+    worker.indexOf("if (MCP_PATHS.has(url.pathname))")
+  );
+  assert.ok(gate.length > 0, "rate-limit gate must exist");
+  assert.match(gate, /POST_API_PATHS\.has\(url\.pathname\) \|\| MCP_PATHS\.has\(url\.pathname\)/);
+  assert.doesNotMatch(gate, /startsWith\('\/api\/'\)/);
+});
+
 test("the MCP enrich tool enforces the same unique-public-IP contract as REST", () => {
   // The schema promises uniqueItems and public addresses; the dispatch must
   // reject rather than silently dedupe, matching POST /api/header/enrich.
