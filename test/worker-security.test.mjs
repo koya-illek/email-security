@@ -262,13 +262,62 @@ test("SPF redirect strength is judged from the redirect target's terminal policy
   assert.ok(recursion.length > 0, "recursion must exist");
   // The last write to finalAll must belong to the deepest followed target.
   assert.match(recursion, /let followedRedirect = false/);
-  assert.match(recursion, /followedRedirect = true;\s*await countSpfDnsLookupsRecursive\(redirect/);
+  assert.match(recursion, /followedRedirect = true;\s*const nextAncestry = new Set\(ancestry\);\s*nextAncestry\.add\(redirect\);\s*await countSpfDnsLookupsRecursive\(redirect/);
   assert.match(recursion, /if \(!followedRedirect\) state\.finalAll = ownAll;/);
   const analyzeSpf = worker.slice(worker.indexOf("async function analyzeSPF("), worker.indexOf("function findDuplicateSpfIncludes("));
   assert.match(analyzeSpf, /Hard fail via redirect \(-all\)/);
   assert.match(analyzeSpf, /Permissive policy behind redirect/);
   assert.match(analyzeSpf, /SPF redirect points nowhere/, "an unresolvable target is a permanent error, never a pass");
   assert.match(analyzeSpf, /Redirected policy strength unconfirmed/);
+});
+
+test("a record without all or redirect scores its true neutral default", () => {
+  // RFC 7208 §4.7: no all mechanism and no redirect means every unmatched
+  // client gets neutral — semantically the ?all that already fails. A bare
+  // "v=spf1" used to earn a full pass from its lookup-budget check alone.
+  const analyzeSpf = worker.slice(worker.indexOf("async function analyzeSPF("), worker.indexOf("function findDuplicateSpfIncludes("));
+  const neutralAt = analyzeSpf.indexOf("No all mechanism or redirect");
+  const terminalAt = analyzeSpf.indexOf("const terminal = parts.map(spfTerminalTerm).find(Boolean);");
+  assert.ok(neutralAt > -1, "the neutral-default failure branch must exist");
+  assert.ok(terminalAt > -1 && neutralAt > terminalAt, "it must hang off the terminal-term chain");
+  assert.match(analyzeSpf, /!terminal && !mechanisms\.some\(m => m\.type === 'redirect'\)/);
+});
+
+test("shared nested includes cost one execution per traversing branch", () => {
+  // RFC 7208 §4.6.4 caps query executions: two sibling includes sharing a
+  // nested target run it twice. A global visited set undercounted such
+  // records and could hide a receiver-visible permerror near the limit;
+  // cycle safety belongs on the current path's ancestry instead.
+  const recursion = worker.slice(worker.indexOf("async function countSpfDnsLookupsRecursive("), worker.indexOf("async function buildSpfFlattenPreview("));
+  assert.match(recursion, /ancestry = new Set\(\)/);
+  assert.match(recursion, /ancestry\.has\(includeDomain\)/);
+  assert.match(recursion, /nextAncestry\.add\(includeDomain\)/);
+  assert.match(recursion, /ancestry\.has\(redirect\)/);
+  assert.doesNotMatch(recursion, /seen\.has\(includeDomain\)/);
+  // The scored path seeds ancestry with the analyzed domain so a
+  // self-include cannot loop.
+  assert.doesNotMatch(worker, /countSpfDnsLookupsRecursive\(domain, record, new Set\(\)/);
+});
+
+test("an include target publishing unrelated TXT is a no-match, never a void lookup", async () => {
+  // §5.2: an include whose target has no SPF record simply does not match.
+  // Counting TXT-bearing targets as void lookups warned healthy records
+  // (pass→warn) and errored validators at the two-void permerror threshold.
+  const { missingSpfTargetClass } = await import("../policy-tags.js");
+  const okNoSpf = ["site-verification-token"];
+  Object.defineProperty(okNoSpf, "dnsStatus", { value: "ok" });
+  const nxdomain = [];
+  Object.defineProperty(nxdomain, "dnsStatus", { value: "nxdomain" });
+  const nodata = [];
+  Object.defineProperty(nodata, "dnsStatus", { value: "nodata" });
+  assert.equal(missingSpfTargetClass(okNoSpf), "empty");
+  assert.equal(missingSpfTargetClass(nxdomain), "void");
+  assert.equal(missingSpfTargetClass(nodata), "void");
+  const analyzeSpf = worker.slice(worker.indexOf("async function analyzeSPF("), worker.indexOf("function findDuplicateSpfIncludes("));
+  assert.match(analyzeSpf, /emptyIncludes/);
+  assert.match(analyzeSpf, /Include targets without an SPF policy/);
+  // A REDIRECT to a TXT-bearing-but-SPF-less name still ends in permerror.
+  assert.match(analyzeSpf, /recursive\.emptyIncludes\?\.includes\(target\)/);
 });
 
 test("macro-bearing SPF targets are disclosed as unverifiable, not queried literally", () => {

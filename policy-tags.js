@@ -153,6 +153,17 @@ function parseTagRecord(record) {
   );
 }
 
+// RFC 7208 §4.6.4 defines a void lookup as NXDOMAIN or an answer with no
+// records of the queried type. A name publishing OTHER TXT records (site
+// verification, DKIM at the apex, …) is NOT a void lookup: receivers treat
+// an include with no SPF record as a plain no-match (§5.2) — though a
+// REDIRECT to such a name still ends evaluation in permerror (§6.1).
+// Callers must treat the two classes alike when judging redirects.
+function missingSpfTargetClass(records) {
+  if (records?.dnsStatus === 'ok' && records.length > 0) return 'empty';
+  return 'void';
+}
+
 module.exports = {
   DMARC_POLICY_VALUES,
   isDmarcVersionRecord,
@@ -165,5 +176,6 @@ module.exports = {
   isValidSpfDomainSpec,
   isSpfModifierShape,
   spfTermSyntaxError,
+  missingSpfTargetClass,
   effectiveDmarcPolicy
 };

@@ -38,6 +38,7 @@ const {
   isValidSpfDomainSpec,
   isSpfModifierShape,
   spfTermSyntaxError,
+  missingSpfTargetClass,
   DMARC_POLICY_VALUES,
   effectiveDmarcPolicy
 } = require('./policy-tags');
@@ -1052,11 +1053,12 @@ async function validateSpfRecord(domain, value, budget = null) {
   }
 
   const recursive = domain && parsed.hasVersion
-    ? await countSpfDnsLookupsRecursive(domain, record, new Set(), 0, null, budget)
-    : { count: countVisibleSpfLookups(terms), voidLookups: [], unknownLookups: [], macroLookups: [], truncated: false };
+    ? await countSpfDnsLookupsRecursive(domain, record, new Set([domain.toLowerCase()]), 0, null, budget)
+    : { count: countVisibleSpfLookups(terms), voidLookups: [], emptyIncludes: [], unknownLookups: [], macroLookups: [], truncated: false };
   if (recursive.count > 10) errors.push(`SPF evaluation requires ${recursive.count} DNS lookups; the maximum is 10.`);
   if (recursive.voidLookups?.length > 2) errors.push(`SPF evaluation produces ${recursive.voidLookups.length} void lookups; no more than 2 are allowed.`);
   else if (recursive.voidLookups?.length) warnings.push(`No SPF record was found for: ${recursive.voidLookups.join(', ')}`);
+  if (recursive.emptyIncludes?.length) warnings.push(`These include targets publish other TXT records but no SPF policy: ${recursive.emptyIncludes.join(', ')}.`);
   if (recursive.truncated) errors.push('Recursive SPF validation could not complete within safety limits.');
 
   let evaluator = null;
@@ -1088,6 +1090,7 @@ async function validateSpfRecord(domain, value, budget = null) {
     warnings: [...new Set(warnings)],
     lookupCount: recursive.count,
     voidLookups: recursive.voidLookups || [],
+    emptyIncludes: recursive.emptyIncludes || [],
     characterCount: record.length,
     evaluator: evaluator ? {
       result: evaluator.status?.result,
@@ -1765,6 +1768,15 @@ async function analyzeSPF(domain, records, budget = null) {
       detail: `Using ${terminal} produces pass or neutral for unmatched clients and does not express a useful denial policy.`,
       recommendation: 'Change to -all or ~all.'
     });
+  } else if (!terminal && !mechanisms.some(m => m.type === 'redirect')) {
+    // RFC 7208 §4.7: with no all mechanism and no redirect, evaluation
+    // defaults to neutral — semantically the ?all this branch already fails.
+    checks.push({
+      status: 'fail',
+      title: 'No all mechanism or redirect',
+      detail: 'The record ends without an all mechanism or redirect, so every unmatched client receives the default neutral result — equivalent to publishing ?all.',
+      recommendation: 'Add ~all or -all to state how unmatched senders are treated.'
+    });
   }
 
   const providerList = [...providers];
@@ -1796,7 +1808,7 @@ async function analyzeSPF(domain, records, budget = null) {
     });
   }
 
-  const recursive = await countSpfDnsLookupsRecursive(domain, record, new Set(), 0, null, budget);
+  const recursive = await countSpfDnsLookupsRecursive(domain, record, new Set([domain.toLowerCase()]), 0, null, budget);
   const lookupCount = recursive.count;
   if (recursive.truncated) {
     checks.push({
@@ -1812,6 +1824,14 @@ async function analyzeSPF(domain, records, budget = null) {
       title: 'SPF void lookups',
       detail: `No SPF record found for: ${recursive.voidLookups.slice(0, 4).join(', ')}`,
       recommendation: 'Remove stale includes or fix missing provider SPF records.'
+    });
+  }
+  if (recursive.emptyIncludes?.length) {
+    checks.push({
+      status: 'info',
+      title: 'Include targets without an SPF policy',
+      detail: `${recursive.emptyIncludes.slice(0, 4).join(', ')} publish other TXT records but no v=spf1 record, so those includes match nothing. Receivers treat this as a plain no-match, not an error.`,
+      recommendation: 'Remove the includes or point them at targets that publish the intended SPF policy.'
     });
   }
   if (recursive.unknownLookups?.length) {
@@ -1835,9 +1855,11 @@ async function analyzeSPF(domain, records, budget = null) {
     // receivers apply that record's policy here (RFC 7208 §6.1). Judge
     // strength by the target chain's terminal instead of granting a pass.
     const redirectedTerminal = recursive.truncated ? null : recursive.finalAll;
+    // §6.1: a redirect to a name with no SPF record ends in permerror —
+    // whether the name is NXDOMAIN or publishes unrelated TXT.
     const voidedRedirect = mechanisms
       .map(m => m.value.slice('redirect='.length))
-      .find(target => recursive.voidLookups.includes(target));
+      .find(target => recursive.voidLookups.includes(target) || recursive.emptyIncludes?.includes(target));
     if (redirectedTerminal === '-all') {
       checks.push({
         status: 'pass',
@@ -1923,8 +1945,8 @@ function findDuplicateSpfIncludes(mechanisms) {
   return [...duplicates];
 }
 
-async function countSpfDnsLookupsRecursive(domain, record, seen = new Set(), depth = 0, state = null, budget = null) {
-  state ||= { count: 0, voidLookups: [], unknownLookups: [], macroLookups: [], includes: [], truncated: false, queries: 0, finalAll: null };
+async function countSpfDnsLookupsRecursive(domain, record, ancestry = new Set(), depth = 0, state = null, budget = null) {
+  state ||= { count: 0, voidLookups: [], emptyIncludes: [], unknownLookups: [], macroLookups: [], includes: [], truncated: false, queries: 0, finalAll: null };
   if (!record || depth > 8 || state.queries > 30) {
     state.truncated = true;
     return state;
@@ -1954,9 +1976,15 @@ async function countSpfDnsLookupsRecursive(domain, record, seen = new Set(), dep
     if (!/^[+?~-]/.test(token) && clean.startsWith('redirect=')) redirect = clean.slice(9);
   });
 
+  // RFC 7208 §4.6.4 caps DNS-query EXECUTIONS, and each include branch runs
+  // its subtree again: two sibling includes that share a nested target cost
+  // two executions of it, so cycle safety uses the current path's ancestry,
+  // never a global visited set that would undercount shared subtrees.
   for (const includeDomain of includes) {
-    if (seen.has(includeDomain)) continue;
-    seen.add(includeDomain);
+    if (ancestry.has(includeDomain)) {
+      state.truncated = true;
+      continue;
+    }
     state.includes.push(includeDomain);
     if (hasSpfMacro(includeDomain)) {
       state.macroLookups.push(includeDomain);
@@ -1970,14 +1998,14 @@ async function countSpfDnsLookupsRecursive(domain, record, seen = new Set(), dep
       continue;
     }
     if (!nestedSpf) {
-      state.voidLookups.push(includeDomain);
+      classifyMissingInclude(state, includeDomain, nestedRecords);
       continue;
     }
-    await countSpfDnsLookupsRecursive(includeDomain, nestedSpf, seen, depth + 1, state, budget);
+    const nextAncestry = new Set(ancestry);    nextAncestry.add(includeDomain);
+    await countSpfDnsLookupsRecursive(includeDomain, nestedSpf, nextAncestry, depth + 1, state, budget);
   }
 
-  if (redirect && !seen.has(redirect)) {
-    seen.add(redirect);
+  if (redirect && !ancestry.has(redirect)) {
     state.includes.push(redirect);
     if (hasSpfMacro(redirect)) {
       state.macroLookups.push(redirect);
@@ -1986,10 +2014,12 @@ async function countSpfDnsLookupsRecursive(domain, record, seen = new Set(), dep
       const redirectRecords = await queryDNS(redirect, 'TXT', budget);
       const redirectSpf = findSpfRecord(redirectRecords)[0];
       if (!redirectSpf && !['ok', 'nodata', 'nxdomain'].includes(redirectRecords?.dnsStatus)) state.unknownLookups.push(redirect);
-      else if (!redirectSpf) state.voidLookups.push(redirect);
+      else if (!redirectSpf) classifyMissingInclude(state, redirect, redirectRecords);
       else {
         followedRedirect = true;
-        await countSpfDnsLookupsRecursive(redirect, redirectSpf, seen, depth + 1, state, budget);
+        const nextAncestry = new Set(ancestry);
+        nextAncestry.add(redirect);
+        await countSpfDnsLookupsRecursive(redirect, redirectSpf, nextAncestry, depth + 1, state, budget);
       }
     }
   }
@@ -1997,6 +2027,14 @@ async function countSpfDnsLookupsRecursive(domain, record, seen = new Set(), dep
   if (!followedRedirect) state.finalAll = ownAll;
 
   return state;
+}
+
+// The RFC-based void/no-match classification lives in policy-tags.js
+// (missingSpfTargetClass), shared with its behavioral unit suite; this
+// wrapper routes each missing target into the report's evidence lists.
+function classifyMissingInclude(state, name, records) {
+  if (missingSpfTargetClass(records) === 'empty') state.emptyIncludes.push(name);
+  else state.voidLookups.push(name);
 }
 
 async function buildSpfFlattenPreview(domain, record, budget = null) {
