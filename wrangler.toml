@@ -53,8 +53,8 @@ binding = "DB"
 database_name = "email-security-reports"
 database_id = "0bf4a477-ec76-4b1c-a45f-4d2af62b6eec"
 
-# Optional: Enable Workers KV for persistent caching
-# [[kv_namespaces]]
-# binding = "CACHE"
-# id = "your-kv-namespace-id"
-# preview_id = "your-preview-kv-namespace-id"
+# Workers Logs: fault references (the "Internal error (abcd1234)" bodies)
+# are only diagnosable when the server-side console.error lines survive the
+# isolate. Default sampling is fine; the data lives in the dashboard.
+[observability]
+enabled = true

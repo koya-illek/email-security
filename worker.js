@@ -66,7 +66,8 @@ const EXPENSIVE_RATE_LIMITER_BINDING = 'EXPENSIVE_RATE_LIMITER';
 const BATCH_MAX_DOMAINS = 3;
 // PTR observation carries no score weight, so it runs after scored controls
 // and is capped well below its theoretical fan-out of 8 hosts x 8 addresses;
-// only the first observation is ever rendered or surfaced.
+// the UI renders only the first observation, but every collected one ships
+// in the stored, exported, and MCP JSON payloads.
 const MAX_PTR_OBSERVATIONS = 4;
 const EXPENSIVE_POST_PATHS = new Set([
   '/api/check',
@@ -1088,7 +1089,7 @@ async function validateSpfRecord(domain, value, budget = null) {
   if (recursive.truncated) errors.push('Recursive SPF validation could not complete within safety limits.');
 
   let evaluator = null;
-  if (parsed.hasVersion && (domain || isValidDomain('fixture.example'))) {
+  if (parsed.hasVersion) {
     try {
       evaluator = await evaluateSpf({
         ip: '192.0.2.1',

@@ -36,6 +36,11 @@ function reportShareMetadata(id, expiresAt = null, available = Boolean(id)) {
   };
 }
 
+// D1 rows are bounded by the platform (~2 MB); a payload past the guard is
+// refused intentionally instead of surfacing as an incidental insert error
+// that degrades sharing with no explanation in the logs.
+const MAX_REPORT_JSON_CHARS = 1024 * 1024;
+
 async function storeReport(env, report) {
   if (!env.DB) return null;
   const id = generateReportId();
@@ -46,6 +51,17 @@ async function storeReport(env, report) {
     id,
     share: reportShareMetadata(id, expires, true)
   };
+  const serialized = JSON.stringify(storedReport);
+  if (serialized.length > MAX_REPORT_JSON_CHARS) {
+    console.error(JSON.stringify({
+      level: 'error',
+      message: 'Report payload exceeds storage guard',
+      type: report._reportType || 'domain',
+      domain: report.domain || null,
+      bytes: serialized.length
+    }));
+    return null;
+  }
   try {
     await env.DB.prepare(
       'INSERT INTO reports (id, type, domain, report_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)'
@@ -53,13 +69,22 @@ async function storeReport(env, report) {
       id,
       report._reportType || 'domain',
       report.domain || null,
-      JSON.stringify(storedReport),
+      serialized,
       now,
       expires
     ).run();
     return id;
-  } catch {
-    // Sharing degrades to unavailable; the analysis result itself is unaffected.
+  } catch (error) {
+    // Sharing still degrades to unavailable for the user; the failure itself
+    // must be visible to operators instead of collapsing into a silent null.
+    console.error(JSON.stringify({
+      level: 'error',
+      message: 'Report storage insert failed',
+      type: report._reportType || 'domain',
+      domain: report.domain || null,
+      errorName: error?.name || 'Unknown',
+      detail: String(error?.message || error)
+    }));
     return null;
   }
 }
