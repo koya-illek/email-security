@@ -6,10 +6,10 @@ function isLocalDevelopmentHost(hostname) {
 
 function redirectForRequest(request, securityHeaders = {}) {
   const url = new URL(request.url);
-  // Redirect decisions use the URL supplied by the runtime. Host,
-  // CF-Connecting-IP, and MF-Original-Hostname are request headers and can be
-  // spoofed by a client; none of them may turn a production HTTP request into
-  // a local request. Wrangler tests use localhost/127.0.0.1 URLs directly.
+  // Redirect decisions use the URL supplied by the runtime. Request headers
+  // naming the original host (CF-Connecting-IP, MF-Original-Hostname, …) can
+  // be spoofed by a client; none of them may turn a production HTTP request
+  // into a local request. Wrangler tests use localhost/127.0.0.1 URLs directly.
   const localRequest = isLocalDevelopmentHost(url.hostname);
   if (url.hostname === 'checker.illek.ie') {
     url.hostname = 'email.illek.ie';

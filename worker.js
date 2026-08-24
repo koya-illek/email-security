@@ -129,7 +129,6 @@ const POST_API_PATHS = new Set([
 const API_ROUTE_METHODS = [
   ['/api/health', ['GET', 'HEAD']],
   ['/api', ['GET']],
-  ['/api/', ['GET']],
   ['/api/v2', ['GET']],
   ['/api/check', ['POST']],
   ['/api/v2/domain-check', ['POST']],
@@ -844,7 +843,10 @@ function makeSpfRecordResolver(domain, record, budget = null) {
 function jsonResponse(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...API_SECURITY_HEADERS, 'Content-Type': 'application/json', ...headers }
+    // Every JSON surface answers with dynamic, per-request data — analysis
+    // payloads embed bearer share links and quota state — so no machine
+    // response is cacheable by default. Callers may still override.
+    headers: { ...API_SECURITY_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store', ...headers }
   });
 }
 
