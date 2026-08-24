@@ -987,3 +987,23 @@ test('a forwarded message with an ARC chain surfaces the archived pass', async (
   await expect(page.locator('#header-results')).toContainText('ARC chain of 1 instance(s) recorded');
   await expect(page.locator('#header-results')).toContainText('ARC preserves an earlier pass');
 });
+test('a drifted header analysis degrades to readable copy instead of a TypeError', async ({ page }) => {
+  // The analysis payload is network data; a shape without summary/checks/hops
+  // must land in the error panel as readable copy, never as parser output.
+  await page.route('**/api/header/analyze', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ unexpected: true })
+  }));
+
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/#headers');
+  await page.getByLabel('Complete message headers').fill('From: a@example.com\r\nReceived: from x by y; Thu, 23 Jul 2026 20:00:00 +0100');
+  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+
+  await expect(page.locator('#header-error')).toBeVisible();
+  await expect(page.locator('#header-error-msg')).toContainText('could not render');
+  await expect(page.locator('#header-error-msg')).not.toContainText('Cannot read properties');
+  expect(errors).toEqual([]);
+});

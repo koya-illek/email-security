@@ -263,7 +263,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `email-security-${lastDomainReport.domain}.json`;
+      a.download = `email-security-${lastDomainReport.domain || "report"}.json`;
       a.click();
       URL.revokeObjectURL(url);
     }
@@ -1188,7 +1188,7 @@
       if (generation !== headerGeneration.current()) return;
       lastHeaderAnalysis = d;
       showHeaderAnalysis(d);
-      enrichHeadersBtn.disabled = !d.ips.length;
+      enrichHeadersBtn.disabled = !(Array.isArray(d.ips) && d.ips.length);
     } catch (err) {
       if (generation === headerGeneration.current()) {
         showHeaderError(err.message || "Header analysis failed");
@@ -1208,7 +1208,7 @@
   });
 
   enrichHeadersBtn?.addEventListener("click", async () => {
-    if (!lastHeaderAnalysis || !lastHeaderAnalysis.ips.length) return;
+    if (!lastHeaderAnalysis || !lastHeaderAnalysis.ips?.length) return;
     const generation = headerGeneration.current();
     const analysis = lastHeaderAnalysis;
     enrichHeadersBtn.disabled = true;
@@ -1244,7 +1244,18 @@
       showHeaderError(d.error);
       return;
     }
+    try {
+      renderHeaderAnalysis(d);
+    } catch {
+      // Analysis answers arrive over the network even though they share the
+      // deployment; a drifted payload must degrade to readable copy, never
+      // to a raw TypeError surfaced through the error panel.
+      headerResults.innerHTML = "";
+      showHeaderError("The analysis returned evidence this page could not render. Paste the headers and analyze again.");
+    }
+  }
 
+  function renderHeaderAnalysis(d) {
     const summary = d.summary;
     let html = `<div class="trust-banner ${safeStatusClass(summary.status)}">
       <strong>${esc(summary.verdict)}</strong>
