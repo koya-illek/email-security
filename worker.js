@@ -153,29 +153,39 @@ function createRequestBudget(limit = REQUEST_SUBREQUEST_LIMIT) {
 async function createDomainReport(domain, env, budget = createRequestBudget()) {
   const cacheKey = new Request(`https://cache.internal/${CACHE_VERSION}/${domain}`);
   const cache = caches.default;
+  let analysis;
   const cached = await cache.match(cacheKey);
   if (cached) {
-    const report = await cached.json();
-    report.request_budget = budget.snapshot();
-    return report;
+    const storedAnalysis = await cached.json();
+    // The edge cache carries the analysis only. A previous requester's
+    // bearer id, expiry, and storage outcome must never serve to someone
+    // else: stripping them here also repairs entries written by older
+    // revisions that embedded per-request share blocks.
+    delete storedAnalysis.id;
+    delete storedAnalysis.share;
+    analysis = storedAnalysis;
+  } else {
+    analysis = await analyzeDomain(domain, budget);
+    if (analysis.overall_score > 0) {
+      await cache.put(cacheKey, new Response(JSON.stringify(analysis), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': `public, max-age=${CACHE_TTL}, stale-while-revalidate=86400`
+        }
+      }));
+    }
   }
 
-  const report = await analyzeDomain(domain, budget);
-  report._reportType = 'domain';
-  const reportId = await storeReport(env, report);
-  if (reportId) report.id = reportId;
-  report.share = reportShareMetadata(reportId, reportId ? reportExpiry() : null, Boolean(reportId));
-  report.request_budget = budget.snapshot();
-
-  if (report.overall_score > 0) {
-    await cache.put(cacheKey, new Response(JSON.stringify(report), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': `public, max-age=${CACHE_TTL}, stale-while-revalidate=86400`
-      }
-    }));
-  }
-  return report;
+  analysis._reportType = 'domain';
+  const reportId = await storeReport(env, analysis);
+  if (reportId) analysis.id = reportId;
+  // Every response stores its own row, so each requester receives a share
+  // link whose expiry starts now and whose availability reflects storage
+  // as of this request — a D1 blip cannot pin available:false into the
+  // shared cache entry for a day.
+  analysis.share = reportShareMetadata(reportId, reportId ? reportExpiry() : null, Boolean(reportId));
+  analysis.request_budget = budget.snapshot();
+  return analysis;
 }
 
 function validateBatchDomains(domains) {

@@ -415,6 +415,22 @@ test("crafted validation errors are marked exposed at their throw sites", async 
   assert.doesNotMatch(dispatcher, /throw new Error\(/, "unmarked plain Errors would mask as internal faults");
 });
 
+test("edge-cached analyses carry no per-requester share state", () => {
+  // A cache hit used to replay the first requester's bearer id and expiry
+  // (and a baked available:false after a storage blip) to everyone for a
+  // day. The shared entry must hold analysis only; each response stores its
+  // own row and attaches fresh share metadata.
+  const create = worker.slice(worker.indexOf("async function createDomainReport("), worker.indexOf("function validateBatchDomains("));
+  const stripAt = create.indexOf("delete storedAnalysis.id;");
+  const putAt = create.indexOf("await cache.put(cacheKey");
+  const storeAt = create.indexOf("const reportId = await storeReport(env, analysis);");
+  const shareAt = create.indexOf("analysis.share = reportShareMetadata(reportId");
+  assert.ok(stripAt > -1, "cache hits must be stripped of foreign share state");
+  assert.ok(putAt > -1 && storeAt > -1 && shareAt > -1, "store-then-attach flow must exist");
+  assert.ok(stripAt < storeAt, "foreign share state must be gone before a response is built");
+  assert.ok(putAt < storeAt, "the shared entry must be written before this request's id exists");
+});
+
 test("unexpected analysis failures answer 500 while dependency outages keep 503", () => {
   // Status policy: an unexpected exception is a server fault (500); 503 is
   // reserved for the named dependency outages (rate limiter, D1 accounting,
