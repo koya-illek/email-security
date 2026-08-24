@@ -138,7 +138,7 @@ await Promise.all([
     assert.ok(spec.info?.title && spec.info?.version);
     for (const path of [
       '/api/health', '/api', '/api/v2', '/api/check', '/api/v2/domain-check', '/api/v2/header-analysis',
-      '/api/batch', '/api/spf/inspect', '/api/spf/evaluate', '/api/records/validate',
+      '/api/header/analyze', '/api/batch', '/api/spf/inspect', '/api/spf/evaluate', '/api/records/validate',
       '/api/v2/record-build', '/api/header/enrich', '/api/reports/{reportId}',
       '/api/reports/{reportId}/export', '/mcp', '/mcp/v2'
     ]) {
@@ -153,7 +153,7 @@ await Promise.all([
     assert.ok(reportPath.get.responses['405'], 'report retrieval must document the wrong-verb 405');
     // The status policy: unexpected faults are 500 on every analysis route;
     // 503 appears only where a named dependency outage answers.
-    for (const path of ['/api/check', '/api/v2/domain-check', '/api/v2/header-analysis', '/api/batch',
+    for (const path of ['/api/check', '/api/v2/domain-check', '/api/v2/header-analysis', '/api/header/analyze', '/api/batch',
       '/api/spf/inspect', '/api/spf/evaluate', '/api/records/validate', '/api/v2/record-build', '/api/header/enrich']) {
       assert.equal(spec.paths[path].post.responses['500']?.$ref, '#/components/responses/InternalError',
         `${path} must document the unexpected-fault 500`);
@@ -162,6 +162,42 @@ await Promise.all([
       '#/components/headers/RetryAfter', 'rate limiting must declare its Retry-After header');
     assert.equal(String(spec.components?.responses?.MethodNotAllowed?.headers?.Allow?.$ref || ''),
       '#/components/headers/Allow', '405s must declare their Allow header');
+    // Every $ref must resolve: nine paths once cited a BodyTooLarge component
+    // that was never defined, which fails strict validators and codegen.
+    const unresolved = [];
+    const walk = (node, pointer) => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach((item, i) => walk(item, `${pointer}/${i}`)); return; }
+      for (const [key, value] of Object.entries(node)) {
+        if (key === '$ref' && typeof value === 'string' && value.startsWith('#/')) {
+          let cursor = spec;
+          for (const segment of value.slice(2).split('/')) {
+            cursor = cursor?.[segment.replace(/~1/g, '/').replace(/~0/g, '~')];
+            if (cursor === undefined) break;
+          }
+          if (cursor === undefined) unresolved.push(`${pointer} -> ${value}`);
+          continue;
+        }
+        walk(value, `${pointer}/${key}`);
+      }
+    };
+    walk(spec, '');
+    assert.deepEqual(unresolved, [], 'every internal $ref must resolve');
+    // Operation ids feed client generators; duplicates silently overwrite.
+    const operationIds = [];
+    for (const [path, item] of Object.entries(spec.paths)) {
+      for (const [method, operation] of Object.entries(item)) {
+        if (operation?.operationId) operationIds.push(operation.operationId);
+        else if (['get', 'post', 'head', 'put', 'delete'].includes(method)) operationIds.push(`(missing:${method} ${path})`);
+      }
+    }
+    assert.deepEqual(operationIds.filter((id, i) => operationIds.indexOf(id) !== i), [],
+      'operationIds must be unique and present');
+    // MCP tool calls are rate-limited like any POST; agents must see that.
+    for (const mcpPath of ['/mcp', '/mcp/v2']) {
+      assert.ok(spec.paths[mcpPath].post.responses['429']?.$ref === '#/components/responses/RateLimited',
+        `${mcpPath} must document its 429`);
+    }
   }),
 
   check('MCP connector manifest parses', async () => {
