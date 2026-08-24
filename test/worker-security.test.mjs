@@ -178,18 +178,18 @@ test("POST rate limiting classifies expensive paths, preserves CORS, and bypasse
   for (const path of ["/api/records/validate", "/api/v2/record-build", "/api/spf/inspect"]) {
     assert.ok(expensiveSet.includes(`'${path}'`), `${path} must be classified expensive`);
   }
-  assert.match(worker, /request\.method === 'POST'.*MCP_PATHS\.has\(url\.pathname\)/);
+  assert.match(worker, /request\.method === 'POST' && \(POST_API_PATHS\.has\(routePathname\) \|\| MCP_PATHS\.has\(routePathname\)\)/);
   assert.match(worker, /await limiter\.limit\(\{ key: client \}\)/);
   assert.match(worker, /429,\s*\{ \.\.\.corsHeaders, 'Retry-After': String\(retryAfter\) \}/);
-  assert.match(worker, /if \(request\.method === 'OPTIONS' && !MCP_PATHS\.has\(url\.pathname\)\)/);
-  assert.match(worker, /url\.pathname === '\/api\/health' && \(request\.method === 'GET' \|\| request\.method === 'HEAD'\)/);
+  assert.match(worker, /if \(request\.method === 'OPTIONS' && !MCP_PATHS\.has\(routePathname\)\)/);
+  assert.match(worker, /routePathname === '\/api\/health' && \(request\.method === 'GET' \|\| request\.method === 'HEAD'\)/);
   assert.match(worker, /CF-Connecting-IP.*anonymous/);
 });
 
 test("unmatched machine surfaces answer with the JSON error envelope and 405 on wrong verbs", () => {
   const fallback = worker.slice(worker.indexOf("// Machine surfaces must never receive an unparseable plain-text failure."), worker.indexOf("return new Response('Not found', { status: 404, headers: securityHeaders });"));
   assert.ok(fallback.length > 0, "API fallback must exist");
-  assert.match(fallback, /Method \$\{request\.method\} is not allowed for \$\{url\.pathname\}/);
+  assert.match(fallback, /Method \$\{request\.method\} is not allowed for \$\{routePathname\}/);
   assert.match(fallback, /405,\s*\{ \.\.\.corsHeaders, Allow: apiRoute\[1\]\.join\(', '\) \}/);
   assert.match(fallback, /jsonResponse\(\{ error: 'Not found' \}, 404, corsHeaders\)/);
 });
@@ -342,11 +342,11 @@ test("the POST rate-limit gate charges only paths a POST can actually reach", ()
   // quota; the gate therefore matches routed POST paths explicitly instead
   // of any /api/* prefix.
   const gate = worker.slice(
-    worker.indexOf("if (request.method === 'POST' && (POST_API_PATHS.has(url.pathname)"),
-    worker.indexOf("if (MCP_PATHS.has(url.pathname))")
+    worker.indexOf("if (request.method === 'POST' && (POST_API_PATHS.has(routePathname)"),
+    worker.indexOf("if (MCP_PATHS.has(routePathname))")
   );
   assert.ok(gate.length > 0, "rate-limit gate must exist");
-  assert.match(gate, /POST_API_PATHS\.has\(url\.pathname\) \|\| MCP_PATHS\.has\(url\.pathname\)/);
+  assert.match(gate, /POST_API_PATHS\.has\(routePathname\) \|\| MCP_PATHS\.has\(routePathname\)/);
   assert.doesNotMatch(gate, /startsWith\('\/api\/'\)/);
 });
 
@@ -355,8 +355,8 @@ test("per-minute rejections never spend a daily quota slot", () => {
   // caller's few hundred daily requests — otherwise nine minutes of 429s
   // become an all-day lockout for everyone behind a shared IP.
   const gate = worker.slice(
-    worker.indexOf("if (request.method === 'POST' && (POST_API_PATHS.has(url.pathname)"),
-    worker.indexOf("if (MCP_PATHS.has(url.pathname))")
+    worker.indexOf("if (request.method === 'POST' && (POST_API_PATHS.has(routePathname)"),
+    worker.indexOf("if (MCP_PATHS.has(routePathname))")
   );
   const perMinuteAt = gate.indexOf("await consumePostRateLimit(request");
   const dailyAt = gate.indexOf("await consumeDailyRateLimit(request");
@@ -409,7 +409,7 @@ test("crafted validation errors are marked exposed at their throw sites", async 
   const analyzer = await readFile(new URL("../header-analyzer.js", import.meta.url), "utf8");
   assert.match(analyzer, /empty\.exposed = true;/);
   assert.match(analyzer, /oversized\.exposed = true;/);
-  const dispatcher = worker.slice(worker.indexOf("if (MCP_PATHS.has(url.pathname))"), worker.indexOf("// API endpoint"));
+  const dispatcher = worker.slice(worker.indexOf("if (MCP_PATHS.has(routePathname))"), worker.indexOf("// API endpoint"));
   const throwCount = (dispatcher.match(/throw exposedError\(/g) || []).length;
   assert.ok(throwCount >= 10, `MCP dispatch must mark its validation throws (${throwCount} found)`);
   assert.doesNotMatch(dispatcher, /throw new Error\(/, "unmarked plain Errors would mask as internal faults");
@@ -431,6 +431,18 @@ test("edge-cached analyses carry no per-requester share state", () => {
   assert.ok(putAt < storeAt, "the shared entry must be written before this request's id exists");
 });
 
+test("a trailing slash on a routed API path answers the resource's own contract", () => {
+  // POST /api/batch/ used to miss the exact-path gate and fall through to a
+  // generic 404 — skipping quota and the 405 grammar every other wrong-verb
+  // answer follows. Routing decisions now normalize one trailing slash.
+  const handler = worker.slice(worker.indexOf("async function handleRequest(request, env) {"), worker.indexOf("function makeSpfRecordResolver("));
+  assert.match(handler, /let routePathname = url\.pathname;/);
+  const routeUses = (handler.match(/routePathname/g) || []).length;
+  assert.ok(routeUses > 15, `machine routing must decide on the normalized path (${routeUses} uses)`);
+  // Static asset serving keeps the raw spelling.
+  assert.match(handler, /!url\.pathname\.startsWith\('\/api\/'\)/);
+});
+
 test("unexpected analysis failures answer 500 while dependency outages keep 503", () => {
   // Status policy: an unexpected exception is a server fault (500); 503 is
   // reserved for the named dependency outages (rate limiter, D1 accounting,
@@ -438,11 +450,11 @@ test("unexpected analysis failures answer 500 while dependency outages keep 503"
   // for plain bugs, blurring that distinction.
   assert.match(
     worker,
-    /url\.pathname === '\/api\/batch' && request\.method === 'POST'[\s\S]{0,600}requestErrorResponse\(err, corsHeaders, 500\)/
+    /routePathname === '\/api\/batch' && request\.method === 'POST'[\s\S]{0,600}requestErrorResponse\(err, corsHeaders, 500\)/
   );
   const inspectBlock = worker.slice(
-    worker.indexOf("url.pathname === '/api/spf/inspect' && request.method === 'POST'"),
-    worker.indexOf("url.pathname === '/api/spf/evaluate'")
+    worker.indexOf("routePathname === '/api/spf/inspect' && request.method === 'POST'"),
+    worker.indexOf("routePathname === '/api/spf/evaluate'")
   );
   assert.ok(inspectBlock.includes("requestErrorResponse(err, corsHeaders, 500)"), "inspect fallback must be a server-fault 500");
 });

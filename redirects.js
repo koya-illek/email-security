@@ -4,7 +4,7 @@ function isLocalDevelopmentHost(hostname) {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]' || hostname.endsWith('.workers.dev');
 }
 
-function redirectForRequest(request) {
+function redirectForRequest(request, securityHeaders = {}) {
   const url = new URL(request.url);
   // Redirect decisions use the URL supplied by the runtime. Host,
   // CF-Connecting-IP, and MF-Original-Hostname are request headers and can be
@@ -14,13 +14,27 @@ function redirectForRequest(request) {
   if (url.hostname === 'checker.illek.ie') {
     url.hostname = 'email.illek.ie';
     url.protocol = 'https:';
-    return Response.redirect(url.toString(), 308);
+    // The canonical target has no non-standard port or embedded credentials;
+    // carrying either over would publish an unroutable Location.
+    url.port = '';
+    url.username = '';
+    url.password = '';
+    return redirectResponse(url.toString(), securityHeaders);
   }
   if (url.protocol === 'http:' && !localRequest) {
     url.protocol = 'https:';
-    return Response.redirect(url.toString(), 308);
+    return redirectResponse(url.toString(), securityHeaders);
   }
   return null;
+}
+
+// A bare Response.redirect carries no headers at all; a redirect is still
+// this service's response surface and keeps its security header set.
+function redirectResponse(location, securityHeaders) {
+  return new Response(null, {
+    status: 308,
+    headers: { ...securityHeaders, Location: location }
+  });
 }
 
 module.exports = { redirectForRequest };

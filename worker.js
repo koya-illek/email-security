@@ -364,6 +364,15 @@ export default {
 
 async function handleRequest(request, env) {
   const url = new URL(request.url);
+  // Machine surfaces name exact resources; one trailing slash names the same
+  // resource, so every routing decision below uses the normalized form and a
+  // wrong verb still answers 405+Allow instead of slipping through to the
+  // generic 404 without its quota or contract. Static asset serving keeps
+  // the raw spelling.
+  let routePathname = url.pathname;
+  if (routePathname.startsWith('/api') && routePathname.length > 1 && routePathname.endsWith('/')) {
+    routePathname = routePathname.slice(0, -1);
+  }
   const requestBudget = createRequestBudget();
   requestBudget.sourceRevision = env?.SOURCE_REVISION || 'unknown';
   const securityHeaders = {
@@ -375,7 +384,7 @@ async function handleRequest(request, env) {
     'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload'
   };
 
-  const redirect = redirectForRequest(request);
+  const redirect = redirectForRequest(request, securityHeaders);
   if (redirect) return redirect;
   
   // CORS headers
@@ -391,19 +400,19 @@ async function handleRequest(request, env) {
   // MCP paths answer their own preflight with the narrower header contract
   // mcp.js advertises (POST, OPTIONS only); everything else shares the
   // global preflight below.
-  if (request.method === 'OPTIONS' && !MCP_PATHS.has(url.pathname)) {
+  if (request.method === 'OPTIONS' && !MCP_PATHS.has(routePathname)) {
     return new Response(null, { headers: { ...securityHeaders, ...corsHeaders, 'Access-Control-Max-Age': '600' } });
   }
 
   // HEAD shares the GET response; the runtime strips the body, so uptime
   // probes that default to HEAD see a healthy service instead of a 404.
-  if (url.pathname === '/api/health' && (request.method === 'GET' || request.method === 'HEAD')) {
+  if (routePathname === '/api/health' && (request.method === 'GET' || request.method === 'HEAD')) {
     // CORS applies here too: uptime dashboards and browser-based monitors
     // outside this origin read the health answer just like any API client.
     return jsonResponse({ ok: true, service: 'email-security-checker', version: '2.0.0', source_revision: env.SOURCE_REVISION || 'unknown', liveness: true }, 200, { ...securityHeaders, ...corsHeaders });
   }
 
-  if ((url.pathname === '/api' || url.pathname === '/api/' || url.pathname === '/api/v2') && request.method === 'GET') {
+  if ((routePathname === '/api' || routePathname === '/api/' || routePathname === '/api/v2') && request.method === 'GET') {
     return jsonResponse({
       service: 'Email Security Checker API', version: '2.0.0', source_revision: env.SOURCE_REVISION || 'unknown', website: 'https://email.illek.ie',
       endpoints: {
@@ -416,13 +425,13 @@ async function handleRequest(request, env) {
     }, 200, { ...securityHeaders, ...corsHeaders });
   }
 
-  if (request.method === 'POST' && (POST_API_PATHS.has(url.pathname) || MCP_PATHS.has(url.pathname))) {
+  if (request.method === 'POST' && (POST_API_PATHS.has(routePathname) || MCP_PATHS.has(routePathname))) {
     let retryAfter;
     // The per-minute limiter runs first: every request it rejects must not
     // also consume a non-renewable daily slot, or one burst of 429s converts
     // into an all-day lockout for whoever shares the client IP.
     try {
-      retryAfter = await consumePostRateLimit(request, url.pathname, env);
+      retryAfter = await consumePostRateLimit(request, routePathname, env);
     } catch {
       return jsonResponse({ error: 'Rate limiting is unavailable.' }, 503, corsHeaders);
     }
@@ -442,7 +451,7 @@ async function handleRequest(request, env) {
     }
   }
 
-  if (MCP_PATHS.has(url.pathname)) {
+  if (MCP_PATHS.has(routePathname)) {
     return handleMcp(request, async (tool, args) => {
       if (tool === 'analyze_email_headers') {
         if (typeof args.headers !== 'string') throw exposedError('headers must be a string');
@@ -503,7 +512,7 @@ async function handleRequest(request, env) {
   }
 
   // API endpoint
-  if ((url.pathname === '/api/check' || url.pathname === '/api/v2/domain-check') && request.method === 'POST') {
+  if ((routePathname === '/api/check' || routePathname === '/api/v2/domain-check') && request.method === 'POST') {
     try {
       const { domain } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
       if (!domain) {
@@ -525,7 +534,7 @@ async function handleRequest(request, env) {
     }
   }
 
-  if ((url.pathname === '/api/header/analyze' || url.pathname === '/api/v2/header-analysis') && request.method === 'POST') {
+  if ((routePathname === '/api/header/analyze' || routePathname === '/api/v2/header-analysis') && request.method === 'POST') {
     try {
       const { headers } = await readJsonBody(request, HEADER_JSON_BODY_MAX_BYTES);
       if (typeof headers !== 'string' || !headers.trim()) throw new InvalidRequestError('headers must be a non-empty string');
@@ -537,7 +546,7 @@ async function handleRequest(request, env) {
     }
   }
 
-  if (url.pathname === '/api/header/enrich' && request.method === 'POST') {
+  if (routePathname === '/api/header/enrich' && request.method === 'POST') {
     try {
       const { ips } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
       if (!Array.isArray(ips) || ips.length > 10 || ips.some(ip => typeof ip !== 'string' || !isPublicIpAddress(ip))) {
@@ -555,7 +564,7 @@ async function handleRequest(request, env) {
     }
   }
 
-  if (url.pathname === '/api/spf/inspect' && request.method === 'POST') {
+  if (routePathname === '/api/spf/inspect' && request.method === 'POST') {
     try {
       const { domain } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
       const cleanDomain = normalizeDomain(domain);
@@ -576,7 +585,7 @@ async function handleRequest(request, env) {
     }
   }
 
-  if (url.pathname === '/api/spf/evaluate' && request.method === 'POST') {
+  if (routePathname === '/api/spf/evaluate' && request.method === 'POST') {
     try {
       const { ip, sender, helo, domain, record } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
       const cleanDomain = normalizeDomain(domain || String(sender || '').split('@').pop());
@@ -601,7 +610,7 @@ async function handleRequest(request, env) {
     }
   }
 
-  if (url.pathname === '/api/records/validate' && request.method === 'POST') {
+  if (routePathname === '/api/records/validate' && request.method === 'POST') {
     try {
       const { type, domain, record } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
       if (typeof type !== 'string' || typeof record !== 'string') throw new InvalidRequestError('type and record are required strings');
@@ -623,7 +632,7 @@ async function handleRequest(request, env) {
     }
   }
 
-  if (url.pathname === '/api/v2/record-build' && request.method === 'POST') {
+  if (routePathname === '/api/v2/record-build' && request.method === 'POST') {
     try {
       return jsonResponse({ ...(await buildEmailRecord(await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES), requestBudget)), request_budget: requestBudget.snapshot() }, 200, corsHeaders);
     } catch (err) {
@@ -637,7 +646,7 @@ async function handleRequest(request, env) {
   // before any quota accounting: a malformed path can never reach storage,
   // so it must not spend one of the caller's daily retrievals. HEAD shares
   // the GET response; the runtime strips the body.
-  const reportMatch = url.pathname.match(/^\/api\/reports\/([A-Za-z0-9_-]+)(\/export)?$/);
+  const reportMatch = routePathname.match(/^\/api\/reports\/([A-Za-z0-9_-]+)(\/export)?$/);
   let validReportId = null;
   if ((request.method === 'GET' || request.method === 'HEAD') && reportMatch) {
     const candidate = reportMatch[1];
@@ -689,7 +698,7 @@ async function handleRequest(request, env) {
   }
 
   // POST /api/batch — batch domain check
-  if (url.pathname === '/api/batch' && request.method === 'POST') {
+  if (routePathname === '/api/batch' && request.method === 'POST') {
     try {
       const { domains } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
       const batchReport = await createBatchReport(domains, env, requestBudget);
@@ -719,16 +728,16 @@ async function handleRequest(request, env) {
   }
 
   // Machine surfaces must never receive an unparseable plain-text failure.
-  const apiRoute = API_ROUTE_METHODS.find(([path]) => path === url.pathname);
+  const apiRoute = API_ROUTE_METHODS.find(([path]) => path === routePathname);
   if (apiRoute) {
-    return jsonResponse({ error: `Method ${request.method} is not allowed for ${url.pathname}` }, 405, { ...corsHeaders, Allow: apiRoute[1].join(', ') });
+    return jsonResponse({ error: `Method ${request.method} is not allowed for ${routePathname}` }, 405, { ...corsHeaders, Allow: apiRoute[1].join(', ') });
   }
   // Report routes are dynamic, so they sit outside the static method table;
   // wrong verbs still answer 405 with Allow like every other resource.
-  if (/^\/api\/reports\/[A-Za-z0-9_-]+(\/export)?$/.test(url.pathname) && request.method !== 'GET' && request.method !== 'HEAD') {
-    return jsonResponse({ error: `Method ${request.method} is not allowed for ${url.pathname}` }, 405, { ...corsHeaders, Allow: 'GET, HEAD' });
+  if (/^\/api\/reports\/[A-Za-z0-9_-]+(\/export)?$/.test(routePathname) && request.method !== 'GET' && request.method !== 'HEAD') {
+    return jsonResponse({ error: `Method ${request.method} is not allowed for ${routePathname}` }, 405, { ...corsHeaders, Allow: 'GET, HEAD' });
   }
-  if (url.pathname.startsWith('/api/') || MCP_PATHS.has(url.pathname)) {
+  if (routePathname.startsWith('/api/') || MCP_PATHS.has(routePathname)) {
     return jsonResponse({ error: 'Not found' }, 404, corsHeaders);
   }
 

@@ -33,6 +33,20 @@ test('legacy checker alias uses one-hop canonical HTTPS redirect', () => {
   assert.equal(response.headers.get('location'), 'https://email.illek.ie/api/check?x=1');
 });
 
+test('alias redirects strip ports from the unroutable spelling', () => {
+  const response = redirectForRequest(new Request('http://checker.illek.ie:8080/?x=1'));
+  assert.equal(response.headers.get('location'), 'https://email.illek.ie/?x=1');
+});
+
+test('redirect responses keep the security header set', () => {
+  const response = redirectForRequest(
+    new Request('http://email.illek.ie/'),
+    { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY' }
+  );
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(response.headers.get('x-frame-options'), 'DENY');
+});
+
 test('canonical HTTPS email requests are not redirected', () => {
   assert.equal(redirectForRequest(new Request('https://email.illek.ie/')), null);
 });
