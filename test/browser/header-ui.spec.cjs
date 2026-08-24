@@ -822,6 +822,41 @@ test('an empty batch submit explains itself instead of silently doing nothing', 
   await expect(page.locator('#batch-error-msg')).toContainText('at least one domain');
 });
 
+test('a drifted SPF inspection degrades to readable copy instead of a TypeError', async ({ page }) => {
+  // The flatten payload is network data; missing sources, missing warnings,
+  // and string counts must render as unavailable evidence, never surface the
+  // parser's error text in the alert panel.
+  await page.route('**/api/spf/inspect', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      domain: 'example.com',
+      spf: { status: 'pass', lookupCount: 'two' },
+      flatten: {
+        available: true,
+        safeToPublish: false,
+        record: 'v=spf1 -all',
+        originalRecord: 'v=spf1 -all'
+        // sources, warnings, validation, flattenedLookups, characterCount all absent.
+      }
+    })
+  }));
+
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/#spf');
+  await page.getByLabel('Domain whose SPF record should be inspected').fill('example.com');
+  await page.getByRole('button', { name: 'Inspect SPF' }).click();
+
+  const summary = page.locator('#spf-summary');
+  await expect(summary).toContainText('unavailable');
+  await expect(summary).not.toContainText('undefined');
+  await expect(page.locator('#spf-error')).toBeHidden();
+  await expect(page.locator('#spf-error-msg')).not.toContainText('Cannot read properties');
+  await expect(page.locator('#spf-detail')).toContainText('Review required');
+  expect(errors).toEqual([]);
+});
+
 test('a batch-row click during an active domain check queues instead of dropping', async ({ page }) => {
   // The row button seeds #domain-input programmatically, which fires no input
   // event; the older request must drain and the newer one must still run and

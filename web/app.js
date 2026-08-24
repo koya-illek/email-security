@@ -211,6 +211,17 @@
       : date.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
   }
 
+  // Live payloads are still external-shaped data: a count that arrives as a
+  // string or goes missing reads as "unavailable", never as "undefined/10".
+  function asCount(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function countLabel(count, limit) {
+    return count === null ? "unavailable" : `${count}/${limit}`;
+  }
+
   // ─── Share + Export buttons ──────────────────────────────────
   $("#copy-share-link")?.addEventListener("click", async () => {
     const btn = $("#copy-share-link");
@@ -609,6 +620,18 @@
   }
 
   function showSpfInspector(d) {
+    try {
+      renderSpfInspector(d);
+    } catch {
+      // Inspection answers arrive over the network even though they share the
+      // deployment; a drifted payload must degrade to readable copy, never to
+      // a raw TypeError surfaced through the error panel.
+      spfReport.classList.add("hidden");
+      showSpfError("The SPF inspection returned evidence this page could not render. Run the inspection again.");
+    }
+  }
+
+  function renderSpfInspector(d) {
     const spf = d.spf || {};
     if (spf.unknown || (spf.status === "info" && !spf.record)) {
       // DNS trouble is not absence. Publishing a record based on this state
@@ -627,13 +650,15 @@
       return;
     }
 
-    const recursive = d.spf?.lookupCount ?? f.originalLookups;
+    const recursive = asCount(d.spf?.lookupCount ?? f.originalLookups);
+    const flattened = asCount(f.flattenedLookups);
+    const characters = asCount(f.characterCount);
     const safePreview = f.safeToPublish === true;
 
     $("#spf-summary").innerHTML = `
-      <div class="metric"><small>Recursive lookups</small><strong>${recursive}/10</strong></div>
-      <div class="metric"><small>After preview</small><strong>${f.flattenedLookups}/10</strong></div>
-      <div class="metric"><small>Record length</small><strong>${f.characterCount}</strong></div>
+      <div class="metric"><small>Recursive lookups</small><strong>${countLabel(recursive, 10)}</strong></div>
+      <div class="metric"><small>After preview</small><strong>${countLabel(flattened, 10)}</strong></div>
+      <div class="metric"><small>Record length</small><strong>${characters === null ? "unavailable" : characters}</strong></div>
     `;
 
     let html = "";
@@ -662,26 +687,33 @@
       <div class="dns-value">${esc(f.record)}</div>
     </div>`;
 
+    const flatWarnings = [
+      ...(Array.isArray(f.validation?.errors) ? f.validation.errors : []),
+      ...(Array.isArray(f.warnings) ? f.warnings : []),
+    ];
     html += `<div class="notice ${safePreview ? "good" : ""}">
       <strong>${safePreview ? "Validated point-in-time preview" : "Copy blocked; manual review required"}</strong>
-      ${[...(f.validation?.errors || []), ...f.warnings].map(esc).join("<br>")}
+      ${flatWarnings.map(esc).join("<br>")}
     </div>`;
 
-    html += `<details class="collapsible-section" open>
-      <summary>
-        <span class="cs-icon">SRC</span>
-        <span class="cs-title">Expanded sources</span>
-        <span class="cs-count info">${f.sources.length} records</span>
-      </summary>
-      <div class="cs-body">
-        ${f.sources
-          .map(
-            (x) =>
-              `<div class="source-group"><code>${esc(x.source)}</code><span>${esc(x.mechanisms.join(" "))}</span></div>`
-          )
-          .join("")}
-      </div>
-    </details>`;
+    const sources = Array.isArray(f.sources) ? f.sources : [];
+    if (sources.length) {
+      html += `<details class="collapsible-section" open>
+        <summary>
+          <span class="cs-icon">SRC</span>
+          <span class="cs-title">Expanded sources</span>
+          <span class="cs-count info">${sources.length} records</span>
+        </summary>
+        <div class="cs-body">
+          ${sources
+            .map(
+              (x) =>
+                `<div class="source-group"><code>${esc(x.source)}</code><span>${esc((Array.isArray(x.mechanisms) ? x.mechanisms : []).join(" "))}</span></div>`
+            )
+            .join("")}
+        </div>
+      </details>`;
+    }
 
     html += `<div class="header-actions">
       <button class="secondary-button" data-action="use-spf">${safePreview ? "Use preview in Record Builder" : "Use original in Record Builder"}</button>
@@ -709,7 +741,7 @@
     };
 
     announceAnalysis(
-      `SPF inspection of ${d.domain} complete. ${recursive} recursive lookups, preview uses ${f.flattenedLookups}.`
+      `SPF inspection of ${d.domain} complete. ${recursive === null ? "Lookup counts unavailable" : `${recursive} recursive lookups`}, preview uses ${flattened === null ? "an unavailable lookup count" : flattened}.`
     );
   }
 
