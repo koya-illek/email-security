@@ -770,10 +770,45 @@ test('clearing during hop enrichment reports nothing and throws no internal erro
   await enrich.click();
   await page.getByRole('button', { name: 'Clear' }).click();
 
-  await expect(enrich).toBeDisabled();
+  // Clearing resets the button to its honest pre-analysis label; the id
+  // locator stays stable across the relabel.
+  const resetEnrich = page.locator('#enrich-headers-btn');
+  await expect(resetEnrich).toBeDisabled();
+  await expect(resetEnrich).toHaveText('Analyze headers first');
   await expect(page.locator('#header-error')).toBeHidden();
   await expect(page.locator('#header-error-msg')).not.toContainText('Cannot read properties');
   await expect(page.locator('#header-results')).not.toContainText('dns.google');
+});
+
+test('the enrich button explains its disabled states instead of shipping dead', async ({ page }) => {
+  await page.goto('/#headers');
+  // Before any analysis: the dependency on Analyze Headers is named.
+  const enrich = page.locator('#enrich-headers-btn');
+  await expect(enrich).toBeDisabled();
+  await expect(enrich).toHaveText('Analyze headers first');
+
+  // An analysis that found no public IPs names that outcome too, and the
+  // next analysis with hops re-enables the same control.
+  await page.route('**/api/header/analyze', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(analyzeEmailHeaders('From: a@example.com\r\nSubject: no chain here'))
+  }));
+  await page.getByLabel('Complete message headers').fill('From: a@example.com\r\nSubject: no chain here');
+  await page.getByRole('button', { name: 'Analyze Headers', exact: true }).click();
+  await expect(page.locator('#header-results')).toBeVisible();
+  await expect(enrich).toHaveText('No public IPs to enrich');
+  await expect(enrich).toBeDisabled();
+
+  await page.route('**/api/header/analyze', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(analyzeEmailHeaders(goodHeaders))
+  }));
+  await page.getByLabel('Complete message headers').fill(goodHeaders);
+  await page.getByRole('button', { name: 'Analyze Headers', exact: true }).click();
+  await expect(page.locator('#enrich-headers-btn')).toHaveText('Enrich Hops');
+  await expect(page.locator('#enrich-headers-btn')).toBeEnabled();
 });
 
 test('re-triggering SPF inspection from a report sends exactly one request', async ({ page }) => {
@@ -964,7 +999,7 @@ test('receiver TLS evidence renders per hop and in the findings', async ({ page 
     ' by mx.receiver.example with ESMTPS id abc123',
     ' (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384); Thu, 23 Jul 2026 20:00:00 +0100'
   ].join('\r\n'));
-  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+  await page.getByRole('button', { name: 'Analyze Headers', exact: true }).click();
 
   const receivedSection = page.locator('#header-results details').filter({ hasText: 'Received Chain' });
   await receivedSection.locator(':scope > summary').click();
@@ -982,7 +1017,7 @@ test('a forwarded message with an ARC chain surfaces the archived pass', async (
     'Authentication-Results: mx.final.example; spf=softfail smtp.mailfrom=bounce@list.example; dkim=none; dmarc=fail header.from=example.com',
     'Received: from list.example ([192.0.2.10]) by mx.final.example with ESMTPS id z; Thu, 23 Jul 2026 20:00:00 +0100'
   ].join('\r\n'));
-  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+  await page.getByRole('button', { name: 'Analyze Headers', exact: true }).click();
 
   await expect(page.locator('#header-results')).toContainText('ARC chain of 1 instance(s) recorded');
   await expect(page.locator('#header-results')).toContainText('ARC preserves an earlier pass');
@@ -1000,10 +1035,49 @@ test('a drifted header analysis degrades to readable copy instead of a TypeError
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/#headers');
   await page.getByLabel('Complete message headers').fill('From: a@example.com\r\nReceived: from x by y; Thu, 23 Jul 2026 20:00:00 +0100');
-  await page.getByRole('button', { name: 'Analyze Headers' }).click();
+  await page.getByRole('button', { name: 'Analyze Headers', exact: true }).click();
 
   await expect(page.locator('#header-error')).toBeVisible();
   await expect(page.locator('#header-error-msg')).toContainText('could not render');
   await expect(page.locator('#header-error-msg')).not.toContainText('Cannot read properties');
   expect(errors).toEqual([]);
+});
+
+test('a determinate no-SPF outcome renders neutrally instead of as an inspection failure', async ({ page }) => {
+  // Absence is a diagnostic result; it must not wear the red INSPECT_FAILED
+  // alert that inconclusive lookups earn.
+  await page.route('**/api/spf/inspect', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ domain: 'example.com', spf: { status: 'fail', record: null }, flatten: { available: false } })
+  }));
+
+  await page.goto('/#spf');
+  await page.getByLabel('Domain whose SPF record should be inspected').fill('example.com');
+  await page.getByRole('button', { name: 'Inspect SPF' }).click();
+
+  await expect(page.locator('#spf-report')).toBeVisible();
+  await expect(page.locator('#spf-detail')).toContainText('No SPF record published');
+  await expect(page.locator('#spf-detail')).toContainText('example.com');
+  await expect(page.locator('#spf-error')).toBeHidden();
+});
+
+test('a validation outage never labels a good record invalid', async ({ page }) => {
+  // The builder renders a syntactically sound record, then the validation
+  // POST fails at the transport layer: the copy guard must say the record
+  // was not judged, not that it is invalid.
+  let validateCalls = 0;
+  await openBuilderWithRecord(page, 'v=spf1 ip4:192.0.2.1 -all');
+  await page.route('**/api/records/validate', route => {
+    validateCalls += 1;
+    route.abort('connectionrefused');
+  });
+  await page.locator('#builder-domain').fill('example.org');
+
+  const notice = page.locator('#spf-builder-output .validation-result .notice');
+  await expect(notice).toContainText('Validation unavailable');
+  await expect(notice).not.toContainText('Invalid record');
+  const copy = page.locator('#spf-builder-output .copy-btn');
+  await expect(copy).toBeDisabled();
+  await expect(copy).toHaveText('Validation unavailable');
 });

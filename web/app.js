@@ -658,6 +658,21 @@
     spfError.classList.remove("hidden");
   }
 
+  function showSpfAbsence(domain) {
+    // Record absence is a determinate diagnostic result, not an inspection
+    // failure: it renders neutrally in the report area instead of wearing
+    // the red INSPECT_FAILED alert that genuine DNS trouble earns.
+    $("#spf-summary").innerHTML = "";
+    $("#spf-detail").innerHTML = `
+      <div class="notice info">
+        <strong>No SPF record published</strong>
+        No v=spf1 TXT record was found for ${esc(domain)}. Until one is published, anyone can spoof email as this domain.
+      </div>`;
+    spfReport.classList.remove("hidden");
+    revealResults(spfReport);
+    announceAnalysis(`SPF inspection of ${domain} complete. No SPF record published.`);
+  }
+
   function showSpfInspector(d) {
     try {
       renderSpfInspector(d);
@@ -685,7 +700,7 @@
         showSpfError(`An SPF record exists for ${d.domain}, but the flattening preview is unavailable right now.`);
         return;
       }
-      showSpfError("No SPF record was found for " + d.domain);
+      showSpfAbsence(d.domain);
       return;
     }
 
@@ -1172,10 +1187,26 @@
   // in-flight answer; a response that lands after this must not render.
   const headerGeneration = createGeneration();
 
+  // Every other disabled control here explains itself through its own label;
+  // a silently dead "Enrich Hops" gave no hint it depends on a finished
+  // analysis that found public IPs.
+  function setEnrichButtonState() {
+    if (!lastHeaderAnalysis) {
+      enrichHeadersBtn.textContent = "Analyze headers first";
+      enrichHeadersBtn.disabled = true;
+    } else if (Array.isArray(lastHeaderAnalysis.ips) && lastHeaderAnalysis.ips.length) {
+      enrichHeadersBtn.textContent = "Enrich Hops";
+      enrichHeadersBtn.disabled = false;
+    } else {
+      enrichHeadersBtn.textContent = "No public IPs to enrich";
+      enrichHeadersBtn.disabled = true;
+    }
+  }
+
   function resetHeaderState() {
     headerGeneration.next();
     lastHeaderAnalysis = null;
-    enrichHeadersBtn.disabled = true;
+    setEnrichButtonState();
   }
 
   headerInput?.addEventListener("input", () => {
@@ -1211,7 +1242,7 @@
       if (generation !== headerGeneration.current()) return;
       lastHeaderAnalysis = d;
       showHeaderAnalysis(d);
-      enrichHeadersBtn.disabled = !(Array.isArray(d.ips) && d.ips.length);
+      setEnrichButtonState();
     } catch (err) {
       if (generation === headerGeneration.current()) {
         showHeaderError(err.message || "Header analysis failed");
@@ -1252,8 +1283,7 @@
         showHeaderError(err.message || "Hop enrichment failed");
       }
     } finally {
-      enrichHeadersBtn.textContent = "Enrich Hops";
-      enrichHeadersBtn.disabled = !(lastHeaderAnalysis?.ips?.length);
+      setEnrichButtonState();
     }
   });
 
