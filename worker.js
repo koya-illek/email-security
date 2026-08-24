@@ -830,6 +830,25 @@ function secondsUntilDailyReset() {
   return Math.max(1, Math.ceil((next.getTime() - now.getTime()) / 1000));
 }
 
+// Quota identity must be as stable as the client is: an IPv6 user controls
+// a whole /64 and can otherwise mint fresh per-minute and daily counters by
+// rotating addresses within it. Accounting keys normalize IPv6 to its /64
+// while full precision stays in logs; IPv4 spellings are canonicalized so
+// leading zeros cannot fragment one host across several buckets.
+function quotaClientKey(rawIp) {
+  const value = String(rawIp || '').trim();
+  try {
+    const parsed = ipaddr.parse(value);
+    if (parsed.kind() === 'ipv6') {
+      const prefixParts = parsed.parts.slice(0, 4).concat([0, 0, 0, 0]);
+      return new ipaddr.IPv6(prefixParts).toNormalizedString() + '/64';
+    }
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
+
 async function consumePostRateLimit(request, pathname, env) {
   const bindingName = EXPENSIVE_POST_PATHS.has(pathname)
     ? EXPENSIVE_RATE_LIMITER_BINDING
@@ -839,7 +858,7 @@ async function consumePostRateLimit(request, pathname, env) {
     throw new Error(`${bindingName} binding is not configured`);
   }
 
-  const client = request.headers.get('CF-Connecting-IP')?.trim() || 'anonymous';
+  const client = quotaClientKey(request.headers.get('CF-Connecting-IP') || 'anonymous');
   const { success } = await limiter.limit({ key: client });
   return success ? null : RATE_LIMIT_RETRY_AFTER_SECONDS;
 }
@@ -847,7 +866,7 @@ async function consumePostRateLimit(request, pathname, env) {
 async function consumeDailyRateLimit(request, env, scope, limit) {
   if (!env?.DB || typeof env.DB.prepare !== 'function') throw new Error('D1 rate limiting is unavailable');
   const date = new Date().toISOString().slice(0, 10);
-  const ip = request.headers.get('CF-Connecting-IP')?.trim() || 'anonymous';
+  const ip = quotaClientKey(request.headers.get('CF-Connecting-IP') || 'anonymous');
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${date}:${ip}`));
   const hash = [...new Uint8Array(digest)].slice(0, 16).map(byte => byte.toString(16).padStart(2, '0')).join('');
   const now = new Date().toISOString();

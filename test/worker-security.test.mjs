@@ -372,6 +372,19 @@ test("daily-limit Retry-After names the real reset instead of a flat day", () =>
   assert.ok(uses.length >= 2, "both daily 429 sites (POST and retrieval) must use the honest countdown");
 });
 
+test("quota keys survive IPv6 /64 rotation and IPv4 spelling drift", () => {
+  // An IPv6 client controls a /64; per-address counters let one user mint
+  // fresh quotas forever, while CGNAT IPv4 users legitimately share theirs.
+  assert.match(worker, /function quotaClientKey\(rawIp\)/);
+  assert.match(worker, /parsed\.parts\.slice\(0, 4\)\.concat\(\[0, 0, 0, 0\]\)/);
+  const limiter = worker.slice(worker.indexOf("async function consumePostRateLimit("), worker.indexOf("async function consumeDailyRateLimit("));
+  const daily = worker.slice(worker.indexOf("async function consumeDailyRateLimit("), worker.indexOf("function isValidDomain("));
+  for (const [name, source] of [["per-minute limiter", limiter], ["daily counter", daily]]) {
+    assert.match(source, /quotaClientKey\(/, `${name} must key on the normalized client`);
+    assert.doesNotMatch(source, /headers\.get\('CF-Connecting-IP'\)\?\.trim/, `${name} must not key on the raw spelling`);
+  }
+});
+
 test("unexpected analysis failures answer 500 while dependency outages keep 503", () => {
   // Status policy: an unexpected exception is a server fault (500); 503 is
   // reserved for the named dependency outages (rate limiter, D1 accounting,
