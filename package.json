@@ -28,6 +28,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "ipaddr.js": "^2.4.0",
     "mailauth": "^4.13.3",
     "tldts": "^7.4.9"
   },
