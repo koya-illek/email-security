@@ -60,9 +60,25 @@ function effectiveDmarcPolicy(tags, inherited) {
   return tags.p || null;
 }
 
+// Generic lowercase tag=value parser shared by DMARC records, DKIM
+// signatures, MTA-STS/TLS-RPT records, and scoring's key inspection.
+function parseTagRecord(record) {
+  return Object.fromEntries(
+    String(record || '')
+      .split(';')
+      .map(part => part.trim())
+      .filter(Boolean)
+      .map(part => {
+        const idx = part.indexOf('=');
+        return idx > 0 ? [part.slice(0, idx).trim().toLowerCase(), part.slice(idx + 1).trim().toLowerCase()] : [part.toLowerCase(), ''];
+      })
+  );
+}
+
 module.exports = {
   DMARC_POLICY_VALUES,
   isDmarcVersionRecord,
+  parseTagRecord,
   stripSpfQualifier,
   spfTerminalTerm,
   countVisibleSpfLookups,

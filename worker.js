@@ -34,6 +34,7 @@ const {
   countVisibleSpfLookups,
   hasSpfMacro,
   isDmarcVersionRecord,
+  parseTagRecord,
   DMARC_POLICY_VALUES,
   effectiveDmarcPolicy
 } = require('./policy-tags');
@@ -42,6 +43,8 @@ const {
   mtaStsMxMatches,
   parsePolicyLines
 } = require('./mta-sts');
+const { calculateScore, estimateDkimKeyBits } = require('./scoring');
+
 
 
 const DOH_PROVIDERS = [
@@ -1287,7 +1290,7 @@ async function analyzeDomain(domain, budget = createRequestBudget(REQUEST_SUBREQ
   const transport = analyzeTransportSecurity(mtaStsRecords, tlsRptRecords, mtaStsPolicy, mx.records || []);
 
   // Calculate score
-  const { score, status, confidence, unknown } = calculateScore(spf, dkim, dmarc, mx, caa, transport);
+  const { score, status, confidence, unknown } = calculateScore(spf, dkim, dmarc, mx, caa, transport, ptr);
   const timestamp = new Date().toISOString();
 
   return {
@@ -2394,18 +2397,7 @@ function analyzeDMARC(records, discovery = {}) {
   return { status, record, checks, policy, rua, ruf, policyDomain: discovery.policyDomain || null, inherited: Boolean(discovery.inherited) };
 }
 
-function parseTagRecord(record) {
-  return Object.fromEntries(
-    String(record || '')
-      .split(';')
-      .map(part => part.trim())
-      .filter(Boolean)
-      .map(part => {
-        const idx = part.indexOf('=');
-        return idx > 0 ? [part.slice(0, idx).trim().toLowerCase(), part.slice(idx + 1).trim().toLowerCase()] : [part.toLowerCase(), ''];
-      })
-  );
-}
+// parseTagRecord lives in policy-tags.js, shared with the unit suites.
 
 function parseMailtoList(value) {
   if (!value) return [];
@@ -2481,7 +2473,7 @@ function analyzeDKIM(results) {
       checks.push({
         status: keyBits && keyBits < 2048 ? 'warn' : 'info',
         title: `Selector ${result.selector} uses RSA`,
-        detail: keyBits ? `Estimated public key length: ${keyBits} bits.` : 'RSA DKIM key found.',
+        detail: keyBits ? `Public key length: ${keyBits} bits.` : 'RSA DKIM key found.',
         recommendation: keyBits && keyBits < 2048 ? 'Rotate to a 2048-bit DKIM key where supported.' : 'Use 2048-bit keys where supported.'
       });
     } else if (keyType === 'ed25519') {
@@ -2522,20 +2514,8 @@ function analyzeDKIM(results) {
   };
 }
 
-function estimateDkimKeyBits(publicKey) {
-  const clean = String(publicKey || '').replace(/[^a-z0-9+/=]/gi, '');
-  if (!clean) return null;
-  // DKIM p= contains a DER SubjectPublicKeyInfo wrapper as well as the RSA
-  // modulus, so raw base64 bit length overstates the actual key strength.
-  // Base64 lengths of real SPKIs: RSA-1024 ≈ 200, RSA-2048 ≈ 360-392,
-  // RSA-3072 ≈ 533, RSA-4096 ≈ 707; the 550 cutoff previously read 3072-bit
-  // keys as 2048 and warned owners to rotate already-stronger keys.
-  const length = clean.replace(/=+$/, '').length;
-  if (length < 300) return 1024;
-  if (length < 450) return 2048;
-  if (length < 650) return 3072;
-  return Math.round((length * 6) / 1024) * 1024;
-}
+// estimateDkimKeyBits and calculateScore live in scoring.js, shared with the
+// unit suite; the estimator reads exact RSA modulus bits from the DER SPKI.
 
 function analyzeMX(records) {
   if (!records.length) {
@@ -2916,65 +2896,6 @@ function isValidTlsRptUri(value) {
   }
 }
 
-function calculateScore(spf, dkim, dmarc, mx, caa, transport) {
-  let score = 0;
-  const unknown = [];
-  if (spf.unknown || spf.status === 'info') unknown.push('spf');
-  if (dkim.unknown || dkim.status === 'info') unknown.push('dkim');
-  if (dmarc.unknown || dmarc.status === 'info') unknown.push('dmarc');
-  if (mx.unknown || mx.status === 'info' && mx.records?.length === 0 && mx.checks?.some(check => /inconclusive/i.test(check.title))) unknown.push('mx');
-  if (caa.unknown) unknown.push('caa');
-  if (transport?.unknown) unknown.push('transport');
+// calculateScore lives in scoring.js; see the module for the evidence-in-hand
+// scoring rules and the exact DKIM key-size reader.
 
-  // SPF: 0-25. A conventional ~all policy is a modest deduction, not a
-  // category-level failure; structural errors remain heavily penalised.
-  if (spf.status === 'pass' && !spf.unknown) {
-    score += 25;
-  } else if (spf.status === 'warn' && !spf.unknown) {
-    // Covers both a local ~all and one reached through a redirect target.
-    const softFailOnly = spf.checks?.some(c => c.title.startsWith('Soft fail')) &&
-      !spf.checks.some(c => c.status === 'fail');
-    score += softFailOnly ? 21 : 18;
-  }
-
-  // DKIM: 0-25. Selector discovery is best-effort, so an undiscovered selector
-  // is unknown rather than proof that DKIM is disabled. One active key earns
-  // most points even when another selector is weak, testing, or retired.
-  const usableDkimKeys = (dkim.selectors || []).filter(result => {
-    const tags = parseTagRecord(result.record || '');
-    return Boolean(tags.p && tags.p.trim());
-  }).length;
-  if (usableDkimKeys && !dkim.unknown) {
-    const hasWeakKey = dkim.checks?.some(c =>
-      c.status === 'warn' &&
-      (c.title.includes('uses RSA') || c.title.includes('test mode'))
-    );
-    score += hasWeakKey ? 20 : 25;
-  } else if (dkim.status === 'warn' && !dkim.unknown) {
-    score += 10;
-  }
-
-  // DMARC: 0-35
-  if (dmarc.status === 'pass' && !dmarc.unknown) {
-    score += dmarc.policy === 'reject' ? 35 : 30;
-  } else if (dmarc.status === 'warn' && !dmarc.unknown) score += 15;
-
-  // MX: 0-8
-  if (mx.status === 'pass' && !mx.unknown) score += 8;
-
-  // CAA: 0-2. Useful certificate protection, but not email authentication.
-  if (caa.status === 'pass' && !caa.unknown) score += 2;
-
-  // MTA-STS/TLS-RPT: 0-5
-  if (transport?.status === 'pass' && !transport.unknown) score += 5;
-  else if (transport?.status === 'warn' && !transport.unknown) score += 2;
-
-  let status;
-  if (score >= 85) status = 'excellent';
-  else if (score >= 70) status = 'good';
-  else if (score >= 50) status = 'fair';
-  else status = 'poor';
-
-  const confidence = unknown.length === 0 ? 'high' : unknown.length <= 2 ? 'medium' : 'low';
-  return { score, status, confidence, unknown: [...new Set(unknown)] };
-}

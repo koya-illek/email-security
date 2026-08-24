@@ -111,7 +111,7 @@ test("a budget-exhausted DKIM scan with findings stays inconclusive, not complet
   // an empty unknown_controls list. A scan that stopped early must land in
   // unknown_controls regardless of how many selectors it did find; only the
   // zero-findings branch may keep its own status handling.
-  const analyzeDkimBody = worker.slice(worker.indexOf("function analyzeDKIM("), worker.indexOf("function estimateDkimKeyBits("));
+  const analyzeDkimBody = worker.slice(worker.indexOf("function analyzeDKIM("), worker.indexOf("function analyzeMX("));
   assert.ok(analyzeDkimBody.length > 0, "analyzeDKIM must exist");
   assert.match(
     analyzeDkimBody,
@@ -136,14 +136,16 @@ test("PTR forward confirmation compares addresses, not textual spellings", () =>
   assert.match(checkPtrBody, /budget ran out before any inbound MX host address could be observed/);
 });
 
-test("the DKIM key estimator reports RSA-3072 instead of warning to rotate it", () => {
-  // Base64 SPKI lengths: 1024 ≈ 200, 2048 ≈ 360-392, 3072 ≈ 533, 4096 ≈ 707;
-  // the previous 550 cutoff classified real 3072-bit keys as 2048.
-  const estimator = worker.slice(worker.indexOf("function estimateDkimKeyBits("), worker.indexOf("function analyzeMX("));
-  assert.ok(estimator.length > 0, "estimateDkimKeyBits must exist");
-  assert.match(estimator, /length < 300\) return 1024/);
-  assert.match(estimator, /length < 450\) return 2048/);
-  assert.match(estimator, /length < 650\) return 3072/);
+test("the DKIM key estimator reads exact RSA modulus bits from the DER SPKI", async () => {
+  // Base64-length bands misclassified real keys: a 1536-bit SPKI read as
+  // 2048 and suppressed rotation advice. The estimator now decodes the DER
+  // SubjectPublicKeyInfo and measures the modulus; generated keys of every
+  // common size pin that behaviorally in test/scoring.test.cjs.
+  const scoring = await readFile(new URL("../scoring.js", import.meta.url), "utf8");
+  const estimator = scoring.slice(scoring.indexOf("function rsaModulusBits("), scoring.indexOf("module.exports"));
+  assert.ok(estimator.length > 0, "rsaModulusBits must exist");
+  assert.match(estimator, /tag !== 0x03/, "the SPKI BIT STRING header must be validated");
+  assert.match(estimator, /tag !== 0x02/, "the modulus INTEGER header must be validated");
 });
 
 test("API contract rejects null and wrong-type JSON payloads", () => {
@@ -204,18 +206,19 @@ test("DMARC honours sp= for inherited records instead of scoring by the parent's
   assert.match(helper, /inherited && DMARC_POLICY_VALUES\.includes\(tags\.sp\)\) return tags\.sp;/);
   assert.match(helper, /return tags\.p \|\| null;/);
   assert.match(worker, /require\('\.\/policy-tags'\)/);
-  const analyze = worker.slice(worker.indexOf("function analyzeDMARC(records, discovery"), worker.indexOf("function parseTagRecord(record)"));
+  const analyze = worker.slice(worker.indexOf("function analyzeDMARC(records, discovery"), worker.indexOf("function parseMailtoList("));
   assert.match(analyze, /= effectiveDmarcPolicy\(tags, inheritedRecord\)/);
   assert.match(analyze, /\$\{usingSp \? 'sp' : 'p'\}=none/);
   // Scoring consumes dmarc.policy, which now carries the effective value.
-  assert.match(worker, /score \+= dmarc\.policy === 'reject' \? 35 : 30/);
+  const scoring = await readFile(new URL("../scoring.js", import.meta.url), "utf8");
+  assert.match(scoring, /score \+= dmarc\.policy === 'reject' \? 35 : 30/);
 });
 
 test("duplicate DMARC tags fail live analysis before any policy value is read", () => {
   // parseTagRecord silently keeps the last duplicate, so "p=none;p=reject"
   // was analyzed as whichever came last while the validator refused the same
   // record outright. The live path must fail the record like receivers do.
-  const analyze = worker.slice(worker.indexOf("function analyzeDMARC(records, discovery"), worker.indexOf("function parseTagRecord(record)"));
+  const analyze = worker.slice(worker.indexOf("function analyzeDMARC(records, discovery"), worker.indexOf("function parseMailtoList("));
   const duplicateAt = analyze.indexOf("const duplicateTags = []");
   const failAt = analyze.indexOf("if (duplicateTags.length)");
   const policyAt = analyze.indexOf("const publishedPolicy = tags.p || null;");
