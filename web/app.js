@@ -310,6 +310,11 @@
           `Stored batch comparison loaded. ${Array.isArray(d.results) ? d.results.length : 0} domains in the table.`
         );
       } else {
+        // A bare-id load can arrive through hashchange while another tab is
+        // active (history navigation, a pasted link); batch success and both
+        // error paths activate their panel — domain success must too, or the
+        // report renders into the hidden panel and scroll/announce no-op.
+        selectTool("domain", false, false);
         showDomainResults(d);
       }
     } catch (err) {
@@ -426,7 +431,7 @@
 
   function showDomainResults(d) {
     lastDomainReport = d;
-    $("#report-domain").textContent = d.domain;
+    $("#report-domain").textContent = d.domain || "unknown domain";
     const shareNote = $("#domain-share-note");
     const shareButton = $("#copy-share-link");
     const confidenceNote = $("#domain-confidence");

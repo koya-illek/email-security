@@ -926,6 +926,9 @@ dialog {
   box-shadow: 0 40px 140px #000;
 }
 dialog::backdrop { background: rgba(1, 8, 6, .82); backdrop-filter: blur(8px); }
+/* Focus is moved to the title on open so screen readers announce the
+   dialog's purpose first; the -1 target itself needs no visible ring. */
+dialog h2:focus { outline: none; }
 dialog h2 { margin: 0 0 30px; font-size: 32px; letter-spacing: -.04em; }
 .dialog-close {
   position: absolute;

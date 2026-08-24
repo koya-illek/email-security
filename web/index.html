@@ -412,7 +412,9 @@
 
     <dialog id="method-dialog" aria-labelledby="method-dialog-title">
     <button class="dialog-close" id="dialog-close" type="button" aria-label="Close">×</button>
-    <h2 id="method-dialog-title">What this tool measures</h2>
+    <!-- autofocus + tabindex lands focus on the title, not the Close button
+         that happens to be the first focusable element. -->
+    <h2 id="method-dialog-title" tabindex="-1" autofocus>What this tool measures</h2>
     <div class="method-list">
       <article><span>DNS</span><div><h3>DNS observation</h3><p>SPF, DKIM, DMARC, MX, and CAA records resolved via DNS-over-HTTPS. Transport security checks MTA-STS and TLS-RPT policies. Batch checks compare up to 3 domains.</p></div></article>
       <article><span>HDR</span><div><h3>Header evidence</h3><p>Header analysis parses Authentication-Results claims, Received-SPF results, DKIM-Signature field shape, message addresses, and Received hops. It does not independently verify a DKIM signature or re-run authentication.</p></div></article>
