@@ -38,7 +38,7 @@
       <span>Email<span>Security</span></span>
     </a>
     <nav aria-label="Primary navigation">
-      <button class="text-button" id="method-button" type="button">Methodology</button>
+      <a class="text-button" href="https://tools.illek.ie/">All tools</a><button class="text-button" id="method-button" type="button">Methodology</button>
       <a class="status-link" href="#principles"><span aria-hidden="true"></span> Evidence-first diagnostics</a>
     </nav>
   </header>
@@ -49,8 +49,8 @@
     <div class="sr-only" id="analysis-status" role="status" aria-live="polite"></div>
     <noscript><p class="noscript-note">These analysis tools need JavaScript. With it enabled, checks are sent to this site's API for DNS and header analysis; pasted headers are processed for the request only.</p></noscript>
     <section class="hero" id="home">
-      <h1>Check every DNS record<br><em>that protects your mail.</em></h1>
-      <p class="hero-copy">Audit SPF, DKIM, DMARC, mail routing and transport security for one domain or a small batch at once. Inspect SPF lookup trees, build safer records, and read message headers with shareable reports that show their working.</p>
+      <h1>Check your domain's<br><em>email security.</em></h1>
+      <p class="hero-copy">Inspect mail authentication, DNS policy and message headers. Get the evidence and next steps in a shareable report.</p>
 
       <div class="capability-strip" aria-label="Available analysis">
         <div class="capability"><strong>Domain posture</strong><span>SPF, DKIM, DMARC, MX and transport, single or batch</span></div>
@@ -82,7 +82,7 @@
         <div class="form-meta">
           <span>SPF, DKIM, DMARC, MX, transport</span>
           <span>No login required</span>
-          <span>Results cached 24h</span>
+          <span>Results cached up to 5 minutes</span>
         </div>
       </form>
 
@@ -109,6 +109,7 @@
             <button class="secondary-button" id="export-json" type="button">Export JSON</button>
             <button class="secondary-button" id="inspect-from-report" type="button">Inspect SPF</button>
             <button class="secondary-button" id="build-from-report" type="button">Build records</button>
+            <button class="secondary-button" id="refresh-domain" type="button">Refresh DNS</button>
             <button class="icon-button" id="new-check" type="button" aria-label="Start a new check">+</button>
           </div>
         </header>
@@ -117,8 +118,10 @@
              not queue competing polite updates. -->
         <p class="share-note" id="domain-share-note"></p>
         <p class="share-note" id="domain-confidence"></p>
+        <p class="share-note" id="domain-freshness"></p>
 
         <div class="metrics" id="domain-metrics"></div>
+        <section class="notice" id="domain-next-steps" aria-label="Recommended next steps"></section>
 
         <div class="results-accordion" id="domain-results"></div>
       </section>

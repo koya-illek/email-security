@@ -462,6 +462,13 @@ components:
       properties:
         domain: { type: string }
         timestamp: { type: string, format: date-time }
+        freshness:
+          type: object
+          description: Domain observations are reused for up to five minutes. Upstream DNS TTLs may delay visibility of changes.
+          properties:
+            observedAt: { type: string, format: date-time }
+            refreshAfter: { type: string, format: date-time }
+            cached: { type: boolean }
         overall_score: { type: integer, minimum: 0, maximum: 100 }
         overall_status: { type: string, enum: [excellent, good, fair, poor] }
         score_confidence: { type: string, enum: [high, medium, low] }

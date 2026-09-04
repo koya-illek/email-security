@@ -349,6 +349,14 @@
   const domainGeneration = createGeneration();
   let domainCheckInFlight = false;
   let domainCheckPromise = null;
+  let refreshTimer;
+
+  $("#refresh-domain").addEventListener("click", () => {
+    if (!lastDomainReport || domainCheckInFlight) return;
+    domainInput.value = lastDomainReport.domain;
+    domainGeneration.next();
+    checkForm.requestSubmit();
+  });
 
   // Editing the field orphans the in-flight answer: when the response lands,
   // the generation mismatch stops it from rendering under a different domain.
@@ -368,6 +376,7 @@
     domainError.classList.add("hidden");
     domainReport.classList.add("hidden");
     checkButton.disabled = true;
+    $("#refresh-domain").disabled = true;
     domainCheckPromise = (async () => {
       try {
         const r = await fetch(`${API_BASE}/api/check`, {
@@ -387,6 +396,7 @@
         domainCheckInFlight = false;
         domainLoading.classList.add("hidden");
         checkButton.disabled = false;
+        $("#refresh-domain").disabled = Date.parse(lastDomainReport?.freshness?.refreshAfter || "") > Date.now();
         domainCheckPromise = null;
       }
     })();
@@ -431,6 +441,15 @@
 
   function showDomainResults(d) {
     lastDomainReport = d;
+    clearTimeout(refreshTimer);
+    const observedAt = d.freshness?.observedAt || d.timestamp;
+    const refreshAfter = d.freshness?.refreshAfter;
+    const wait = refreshAfter ? Math.max(0, Date.parse(refreshAfter) - Date.now()) : 0;
+    $("#domain-freshness").textContent = observedAt
+      ? `Observed ${new Date(observedAt).toLocaleString()}.${wait > 0 ? ` Refresh available after ${new Date(refreshAfter).toLocaleTimeString()}.` : " Refresh is available."} DNS resolver caches may retain records until their TTL expires.`
+      : "Observation time unavailable. Refresh before using this report for DNS changes.";
+    $("#refresh-domain").disabled = wait > 0;
+    if (wait > 0) refreshTimer = setTimeout(() => { $("#refresh-domain").disabled = domainCheckInFlight; }, wait);
     $("#report-domain").textContent = d.domain || "unknown domain";
     const shareNote = $("#domain-share-note");
     const shareButton = $("#copy-share-link");
@@ -468,8 +487,18 @@
     html += createPTRSection(d.ptr);
     domainResults.innerHTML = html;
 
-    // Auto-open first section
-    const firstDetails = domainResults.querySelector("details");
+    const controls = [d.spf, d.dkim, d.dmarc, d.mx, d.transport, d.caa, d.ptr];
+    const actions = controls.flatMap((control, index) => (control?.checks || [])
+      .filter(check => ["fail", "warn"].includes(check.status))
+      .map(check => ({ ...check, control: ["SPF", "DKIM", "DMARC", "MX", "Transport", "CAA", "PTR"][index] })))
+      .sort((a, b) => Number(b.status === "fail") - Number(a.status === "fail"));
+    $("#domain-next-steps").innerHTML = actions.length
+      ? `<h3>Next steps</h3><ul>${actions.slice(0, 4).map(check => `<li><strong>${esc(check.control)}: ${esc(check.title)}</strong><p>${esc(check.recommendation || check.detail)}</p></li>`).join("")}</ul>`
+      : `<h3>${unknownControls.length ? "Complete the evidence" : "No urgent changes identified"}</h3><p>${unknownControls.length ? "Refresh the inconclusive controls before changing DNS." : "Review the records below against your intended senders and mail policy."}</p>`;
+    const priority = controls.findIndex(control => control?.status === "fail");
+    const warning = controls.findIndex(control => control?.status === "warn");
+    const details = domainResults.querySelectorAll(":scope > details");
+    const firstDetails = details[priority >= 0 ? priority : warning >= 0 ? warning : 0];
     if (firstDetails) firstDetails.open = true;
 
     domainReport.classList.remove("hidden");
@@ -733,6 +762,9 @@
           ${spf.checks.map(checkItem).join("")}
         </div>
       </details>`;
+    }
+    if (spf.status === "pass" && recursive !== null && recursive < 8) {
+      html += `<p class="notice info">No flattening needed for lookup pressure. Your record uses ${recursive} of 10 lookups. Keeping provider includes lets their sending ranges update automatically.</p>`;
     }
     html += `<div class="output-card">
       <div class="output-head"><strong>Current SPF record</strong><button class="copy-btn" data-copy="original">Copy</button></div>

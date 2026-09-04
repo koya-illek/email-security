@@ -15,6 +15,13 @@ const port = await new Promise((resolve, reject) => {
 });
 const base = `http://127.0.0.1:${port}`;
 const worker = spawn('./node_modules/.bin/wrangler', ['dev', '--local', '--host', '127.0.0.1', '--port', String(port)], { stdio: ['ignore', 'pipe', 'pipe'] });
+// Drain the child streams and retain only unexpected fault diagnostics.
+let workerFaults = '';
+for (const stream of [worker.stdout, worker.stderr]) stream.on('data', chunk => {
+  for (const line of String(chunk).split('\n')) {
+    if (line.includes('Unhandled request fault')) workerFaults = `${workerFaults}\n${line}`.slice(-4000);
+  }
+});
 let postSequence = 0;
 
 async function waitForWorker() {
@@ -293,7 +300,7 @@ async function postResponse(path, body, headers = {}) {
     headers: { 'content-type': 'application/json', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` },
     body: '{not json'
   });
-  assert.equal(invalidJson.status, 400, 'invalid JSON answers 400');
+  assert.equal(invalidJson.status, 400, `invalid JSON answers 400${workerFaults}`);
   assert.match((await invalidJson.json()).error, /valid JSON/);
   const wrongContentType = await postResponse('/api/check', { domain: 'example.com' }, { 'content-type': 'text/plain', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` });
   assert.equal(wrongContentType.status, 200, 'bodies parse by content, not by content-type label');

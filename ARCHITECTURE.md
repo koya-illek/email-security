@@ -119,6 +119,10 @@ The application has no mailbox connection, DMARC aggregate-report ingestion, sen
 
 ## Storage, privacy, and retention
 
+Domain analyses and durable MTA-STS observations are cached for five minutes. Domain reports expose the observation time, cache-hit state, and earliest refresh time. DNS requests do not add an extra Worker HTTP cache over the resolver's own TTL. The browser enables Refresh DNS when the analysis cache window ends; normal request limits still apply.
+
+The result leads with unresolved controls. SPF previews remain available, but healthy records below eight lookups explicitly say that flattening is unnecessary for lookup pressure.
+
 - Domain and batch reports can be saved in D1 under opaque bearer identifiers.
 - Stored reports expire after 14 days and are removed by an hourly Cron Trigger.
 - Report retrieval and export use `Cache-Control: private, no-store`.
@@ -150,6 +154,8 @@ An individual provider or record failure becomes unknown or unavailable evidence
 The analyzer does not prove mail delivery, inspect mailbox contents, monitor ongoing posture, ingest DMARC aggregate reports, discover every DKIM selector, validate a pasted DKIM signature cryptographically, alter DNS, or replace provider-specific delivery and abuse tooling.
 
 ## Verification map
+
+Prefer behaviour, RFC conformance, and request-boundary tests. Source-text assertions about function spelling, comments, and UI wiring have been removed. For UI changes, run the affected browser scenarios rather than every suite.
 
 - Full unit and conformance suite: `npm test`
 - Browser workflows: `npm run test:browser`

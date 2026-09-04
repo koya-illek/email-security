@@ -22,7 +22,7 @@ storage, security-boundary, deployment, and third-party service design.
 ## Optimizations for Workers
 
 - **Parallel DNS lookups**: All queries run concurrently
-- **Edge caching**: 24-hour cache for repeated DNS observations
+- **Edge caching**: Five-minute cache with observation times and a refresh action; upstream DNS TTLs still apply
 - **Minimal CPU usage**: Efficient parsing, no regex backtracking
 - **Structured DoH**: Separates NODATA, NXDOMAIN, SERVFAIL, timeout, and other errors with transient-provider fallback
 

@@ -1178,3 +1178,26 @@ dialog h2 { margin: 0 0 30px; font-size: 32px; letter-spacing: -.04em; }
   details > summary { list-style: none; }
   .batch-table-wrap { overflow-x: visible !important; }
 }
+
+/* Keep the task and its result ahead of introductory material. */
+@media screen {
+  .hero { padding-top: 48px; padding-bottom: 28px; }
+  .hero h1 { font-size: clamp(36px, 5vw, 64px); }
+  .hero-copy { max-width: 64ch; margin-bottom: 24px; }
+  body:has(.report:not(.hidden)) .hero h1 { font-size: 28px; }
+  body:has(.report:not(.hidden)) .hero-copy,
+  body:has(.report:not(.hidden)) .hero-route,
+  body:has(.report:not(.hidden)) .principles,
+  body:has(.report:not(.hidden)) .developer-access,
+  body:has(.report:not(.hidden)) .capability-strip { display: none; }
+  .site-header nav > a.text-button { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; }
+  body:has(.report:not(.hidden)) .site-header .status-link { display: none; }
+  body:has(.report:not(.hidden)) .tool-nav { margin-top: 20px; }
+}
+@media screen and (max-width: 620px) {
+  .hero { padding-top: 28px; padding-bottom: 20px; }
+  .hero h1 { font-size: 36px; }
+  .hero-copy { font-size: 15px; line-height: 1.5; }
+  .capability-strip, .site-header .status-link { display: none; }
+  .site-header nav { gap: 12px; }
+}

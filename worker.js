@@ -61,12 +61,12 @@ const DOH_PROVIDERS = [
   'https://dns.quad9.net/dns-query'
 ];
 
-const CACHE_TTL = 86400; // 24 hour edge cache
-const POLICY_CACHE_TTL = 86400; // 24 hour cache for policy HTTP fetches
+const CACHE_TTL = 300; // Recheck changed DNS after at most five minutes.
+const POLICY_CACHE_TTL = 300;
 // Bump this key whenever report semantics change so a release cannot replay a
 // 24-hour row produced by older analysis code. v11 adds external DMARC report
 // authorisation evidence and RFC 9989 version-token handling.
-const CACHE_VERSION = 'v11-dmarc-reporting';
+const CACHE_VERSION = 'v12-five-minute-observations';
 const DNS_TIMEOUT_MS = 4500;
 // Wall-clock ceiling for one analysis: sequential phases over slow or
 // failing resolvers must degrade to inconclusive evidence instead of
@@ -207,12 +207,17 @@ async function createDomainReport(domain, env, budget = createRequestBudget(REQU
       await cache.put(cacheKey, new Response(JSON.stringify(analysis), {
         headers: {
           'Content-Type': 'application/json',
-          'Cache-Control': `public, max-age=${CACHE_TTL}, stale-while-revalidate=86400`
+          'Cache-Control': `public, max-age=${CACHE_TTL}`
         }
       }));
     }
   }
 
+  analysis.freshness = {
+    observedAt: analysis.timestamp,
+    refreshAfter: new Date(Date.parse(analysis.timestamp) + CACHE_TTL * 1000).toISOString(),
+    cached: Boolean(cached)
+  };
   analysis._reportType = 'domain';
   const reportId = await storeReport(env, analysis);
   if (reportId) analysis.id = reportId;
@@ -1480,7 +1485,7 @@ async function queryDNS(name, type, budget = null) {
       const response = await fetch(dohUrl, {
         headers: { Accept: 'application/dns-json' },
         signal: controller.signal,
-        cf: { cacheTtl: 3600, cacheEverything: true }
+        cf: { cacheTtl: 0 }
       });
       if (!response.ok) {
         last = { status: 'error', rcode: null, provider, error: `DNS-over-HTTPS HTTP ${response.status}` };
@@ -2847,7 +2852,7 @@ function analyzePTR(result, mxRecords) {
 
 async function fetchMtaStsPolicy(domain, budget = null) {
   const url = `https://mta-sts.${domain}/.well-known/mta-sts.txt`;
-  const cacheKey = new Request(`https://policy-cache.internal/mta-sts/${domain}`);
+  const cacheKey = new Request(`https://policy-cache.internal/v2/mta-sts/${domain}`);
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
   if (cached) return cached.json();
@@ -3037,4 +3042,3 @@ function isValidTlsRptUri(value) {
 
 // calculateScore lives in scoring.js; see the module for the evidence-in-hand
 // scoring rules and the exact DKIM key-size reader.
-
