@@ -2403,7 +2403,7 @@ function analyzeDMARC(records, discovery = {}) {
       detail: usingSp
         ? `Receivers apply sp=none from _dmarc.${discovery.policyDomain} to this subdomain: collecting data but not enforcing.`
         : 'Collecting data but not enforcing.',
-      recommendation: `Move to ${usingSp ? 'sp' : 'p'}=quarantine or ${usingSp ? 'sp' : 'p'}=reject${usingSp ? `, or publish a DMARC record for this subdomain` : ''}.`
+      recommendation: `Review aggregate reports and confirm that every legitimate sender passes aligned SPF or DKIM. Resolve failures before moving to ${usingSp ? 'sp' : 'p'}=quarantine. Monitor the effect before considering ${usingSp ? 'sp' : 'p'}=reject${usingSp ? ', or publish a DMARC record for this subdomain' : ''}.`
     });
   } else if (policy === 'quarantine') {
     checks.push({

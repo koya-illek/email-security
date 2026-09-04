@@ -36,6 +36,10 @@
 
   // ─── Tab Navigation ──────────────────────────────────────────────
   function selectTool(name, pushHash = true, focusPanel = true) {
+    const titles = { domain: "Check your domain’s email security.", batch: "Compare email security across domains.", spf: "Inspect your SPF record.", builder: "Build email authentication records.", headers: "Understand an email’s headers." };
+    $("#home h1").textContent = titles[name] || titles.domain;
+    document.body.dataset.emailTool = name;
+    $(`#tab-${name}`)?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
     $$(".tool-tab").forEach((x) => {
       const active = x.dataset.tool === name;
       x.classList.toggle("active", active);
@@ -457,11 +461,12 @@
     const unknownControls = Array.isArray(d.unknown_controls) ? d.unknown_controls : [];
     confidenceNote.textContent = `Score confidence: ${d.score_confidence || "unknown"}. ${unknownControls.length ? `Inconclusive controls: ${unknownControls.join(", ")}. Retry before changing DNS.` : "All scored controls returned a determinate observation."}`;
     confidenceNote.classList.toggle("warning", unknownControls.length > 0);
+    $("#domain-observation").open = unknownControls.length > 0;
     if (d.share?.available && d.share.expiresAt) {
-      shareNote.textContent = `Public bearer link. Anyone with the link can view this report until ${longDate(d.share.expiresAt)}; report responses are not cached by browsers or intermediaries.`;
+      shareNote.textContent = `Anyone with this link can view the report until ${longDate(d.share.expiresAt)}. Share it only with intended recipients.`;
       shareNote.classList.remove("warning");
       shareButton.disabled = false;
-      shareButton.textContent = "Copy share link";
+      shareButton.textContent = "Share report";
     } else {
       setShareUnavailable(shareNote, shareButton);
     }
@@ -1720,10 +1725,10 @@
     const note = $("#batch-share-note");
     const button = $("#batch-copy-link");
     if (report?.share?.available && report.share.expiresAt) {
-      note.textContent = `Public bearer link. Anyone with the link can view this batch report until ${longDate(report.share.expiresAt)}; report responses are not cached by browsers or intermediaries.`;
+      note.textContent = `Anyone with this link can view the batch report until ${longDate(report.share.expiresAt)}. Share it only with intended recipients.`;
       note.classList.remove("warning");
       button.disabled = false;
-      button.textContent = "Copy share link";
+      button.textContent = "Share report";
     } else {
       note.textContent = "Share link unavailable because report storage did not complete. Export the result locally if needed.";
       note.classList.add("warning");

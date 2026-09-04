@@ -1,5 +1,12 @@
 # Email Security Analyzer architecture
 
+## Interface decisions, 2026-09-05
+
+The public name is Email Security. Task headings follow the selected tool.
+Domain reports lead with freshness, results, and next steps, before sharing
+and exports. Inconclusive observations stay visible. DMARC guidance requires
+sender review and monitoring before stronger enforcement.
+
 Last reviewed: 2026-08-23
 
 Email Security Analyzer is an evidence-first diagnostic service for public email-domain posture and pasted message headers. It combines standards-aware DNS analysis, bounded policy retrieval, local header interpretation, shareable reports, REST APIs, and MCP tools in one Cloudflare Worker.

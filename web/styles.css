@@ -1201,3 +1201,33 @@ dialog h2 { margin: 0 0 30px; font-size: 32px; letter-spacing: -.04em; }
   .capability-strip, .site-header .status-link { display: none; }
   .site-header nav { gap: 12px; }
 }
+
+.report-actions { display:flex; flex-wrap:wrap; align-items:flex-start; gap:8px; margin:20px 0 8px; }
+.report-actions button, .export-menu summary { min-height:44px; }
+.export-menu { position:relative; }
+.export-menu summary { display:list-item; cursor:pointer; padding:12px 16px; border:1px solid var(--line); border-radius:4px; font-size:14px; }
+.export-options { display:flex; flex-direction:column; gap:6px; padding:8px 0; }
+.report-observation { margin:12px 0; font-size:14px; }
+.report-observation summary { cursor:pointer; padding:12px 0; min-height:44px; }
+.report-share-note { color:var(--muted); font-size:14px; line-height:1.6; }
+body:has(.report:not(.hidden)) .hero { padding-top:16px; padding-bottom:16px; }
+body:has(.report:not(.hidden)) .hero h1 { font-size:24px; margin-bottom:0; }
+@media(max-width:600px) {
+  .report-actions .secondary-button { flex:0 1 auto; width:auto; min-width:0; font-size:13px; }
+}
+
+.tool-nav { display:flex; flex-wrap:nowrap; overflow-x:auto; gap:4px; scrollbar-width:thin; }
+.tool-nav .tool-tab { flex:0 0 auto; min-height:44px; white-space:nowrap; padding:10px 12px; }
+#tab-spf { margin-left:12px; border-left:1px solid var(--line); }
+body[data-email-tool]:not([data-email-tool="domain"]) .hero-copy { display:none; }
+body:has(#panel-domain.active #domain-report:not(.hidden)) #check-form,
+body:has(#panel-domain.active #domain-report:not(.hidden)) #home h1 { display:none; }
+#domain-freshness { padding:0; border:0; background:none; font-size:13px; }
+#domain-metrics { margin-top:16px; }
+#domain-next-steps { margin-bottom:20px; }
+
+.principles, .developer-access { display:block; padding:16px 0; margin-top:20px; }
+.supporting-details > summary { min-height:44px; padding:12px 0; cursor:pointer; font-weight:600; }
+.supporting-details[open] > summary { margin-bottom:20px; }
+.supporting-details .developer-links { margin-top:20px; }
+@media print { .export-menu, .report-actions, .report-share-note { display:none; } }
