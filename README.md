@@ -267,3 +267,9 @@ wrangler dev
 `npm test` is the CI gate. `npm run test:browser` (Playwright) is a release-time UI check; run it before shipping frontend changes. `scripts/verify-release.mjs` remains the post-deploy production probe (health, HTML/contract audit, two DMARC validations) and does not launch Playwright against production.
 
 Opens at `http://localhost:8787`
+
+## License
+
+MIT © Koya Illek. See [LICENSE](LICENSE).
+
+Live service: [email.illek.ie](https://email.illek.ie).
