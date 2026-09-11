@@ -1,5 +1,7 @@
 # Email Security
 
+An Illek project.
+
 <p align="center">
   <img src="web/social-card.svg" alt="Email Security: Understand your email security posture. SPF, DKIM, DMARC, transport and message evidence." width="720">
 </p>
