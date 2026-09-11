@@ -1,5 +1,9 @@
 # Email Security
 
+<p align="center">
+  <img src="web/social-card.svg" alt="Email Security: Understand your email security posture. SPF, DKIM, DMARC, transport and message evidence." width="720">
+</p>
+
 Serverless email security analyzer for SPF, DKIM, RFC 9989 DMARC, MX,
 MTA-STS, TLS-RPT, CAA, and inbound MX reverse-DNS observations. The live
 service is [email.illek.ie](https://email.illek.ie).
@@ -7,18 +11,81 @@ service is [email.illek.ie](https://email.illek.ie).
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete component, data-flow,
 storage, security-boundary, deployment, and third-party service design.
 
+## Contents
+
+- [How it works](#how-it-works)
+- [Features](#features)
+- [Optimizations for Workers](#optimizations-for-workers)
+- [Deployment](#deployment)
+- [Usage](#usage)
+- [API](#api)
+- [Response Format](#response-format)
+- [Limits](#limits)
+- [Local Development](#local-development)
+
+## How it works
+
+A domain check gathers public DNS and policy evidence, scores only confirmed
+controls, and stores a report only when the caller opts in to sharing.
+
+```mermaid
+flowchart TD
+  caller["Browser, REST, or MCP"] -->|"normalized public domain"| gate["Validate, rate-limit, reserve at most 45 outbound subrequests"]
+  gate --> cache{"Edge analysis cache?"}
+
+  cache -->|miss| dnsWave
+  subgraph dnsWave["Parallel DNS-over-HTTPS"]
+    direction LR
+    spfTxt["SPF TXT"]
+    dmarcWalk["DMARC RFC 9989 tree-walk"]
+    mxRec["MX"]
+    caaRec["CAA"]
+    stsTxt["_mta-sts TXT"]
+    tlsTxt["_smtp._tls TLS-RPT"]
+  end
+  dnsWave --> order["Scored work claims remaining budget first"]
+  order --> spfEng["1. SPF recursion and mailauth RFC 7208"]
+  spfEng --> stsFetch["2. MTA-STS policy fetch from the expected HTTPS origin"]
+  stsFetch --> dkimDisc["3. DKIM selector discovery"]
+  dkimDisc --> extra["Then DMARC rua authorisation and inbound MX PTR"]
+  extra --> score["calculateScore 0-100. Unknown observations drop confidence, not fail points"]
+  score --> storeCache["Cache analysis only, never a share id"]
+
+  cache -->|hit| cached["Reuse cached evidence, score, and confidence"]
+  storeCache --> shareAsk
+  cached --> shareAsk
+
+  shareAsk{"Caller set share true?"}
+  shareAsk -->|no| out["Return the report. Nothing stored."]
+  shareAsk -->|yes| d1["D1 insert: 128-bit bearer id, 14-day expiry, private no-store"]
+  d1 --> out
+```
+
+Unknown DNS states (timeout, SERVFAIL, provider error, budget exhaustion) stay
+distinct from confirmed absence. Determinate analyses cache for five minutes;
+inconclusive or zero-score rows use a shorter window. Cache hits skip the DNS
+wave but still persist a D1 row only when this request asked to share. Header
+analysis is a separate stateless path: it does not query DNS, does not produce
+a domain posture score, and is never saved as a shareable report.
+
 ## Features
 
-- **SPF Analysis**: Mailauth RFC 7208 evaluation with lookup/void limits, plus static policy inspection
-- **DKIM Check**: Common selector discovery
-- **DMARC Analysis**: RFC 9989 tree-walk discovery and RFC 9990 external-report authorisation
-- **MX Records**: Mail server enumeration
-- **CAA Records**: Certificate authority restrictions
-- **PTR Observation**: Forward-confirmed reverse DNS for an inbound MX IP (not a sending reputation claim)
-- **Transport Security**: MTA-STS policy and MX coverage checks plus TLS-RPT validation
-- **SPF Inspector**: Recursive include tracing, lookup-budget analysis, and guarded flattening previews
-- **Record Builder**: Review-ready SPF records and staged DMARC policy planning
-- **Header Analyzer**: Stateless receiver-report interpretation, organisational-domain alignment, conflicting-result detection, structured delivery hops, and opt-in PTR enrichment
+| Feature | What it checks | Domain score |
+| --- | --- | --- |
+| **SPF analysis** | Mailauth RFC 7208 evaluation with lookup/void limits, plus static policy inspection | 0–25 |
+| **DKIM check** | Common selector discovery | 0–25 |
+| **DMARC analysis** | RFC 9989 tree-walk discovery and RFC 9990 external-report authorisation | 0–35 |
+| **MX records** | Mail server enumeration | 0–8 |
+| **CAA records** | Certificate authority restrictions | 0–2 |
+| **Transport security** | MTA-STS policy and MX coverage checks plus TLS-RPT validation | 0–5 |
+| **PTR observation** | Forward-confirmed reverse DNS for an inbound MX IP (not a sending reputation claim) | Observation only |
+| **SPF inspector** | Recursive include tracing, lookup-budget analysis, and guarded flattening previews | Separate tool |
+| **Record builder** | Review-ready SPF records and staged DMARC policy planning | Separate tool |
+| **Header analyzer** | Stateless receiver-report interpretation, organisational-domain alignment, conflicting-result detection, structured delivery hops, and opt-in PTR enrichment | Separate tool |
+
+Posture bands are **excellent** (≥85), **good** (≥70), **fair** (≥50), and
+**poor**. Confidence is **high** when every control resolved, **medium** with
+one or two unknowns, and **low** otherwise.
 
 ## Optimizations for Workers
 
@@ -74,6 +141,10 @@ no `wrangler custom-domain` command. The deployed routes are
 1. Open the deployed URL
 2. Enter a domain (e.g., `example.com`)
 3. View comprehensive email security report
+
+Sharing is opt-in. Tick **Create a shareable link** before checking (or send
+`share: true` on the API) to mint a 14-day bearer URL. Header analysis is never
+stored.
 
 ## API
 
