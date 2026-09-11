@@ -244,6 +244,7 @@ test('domain checks stay unstored unless sharing is requested, and revoke delete
   await expect(page.locator('#domain-share-note')).toContainText('not stored');
   await expect(page.locator('#revoke-share-link')).toBeHidden();
 
+  await page.getByRole('button', { name: 'Start a new check' }).click();
   await page.locator('#domain-share').check();
   await page.getByRole('button', { name: 'Check security' }).click();
   await expect(page.locator('#domain-share-note')).toContainText('Public bearer link');
