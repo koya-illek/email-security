@@ -204,6 +204,54 @@ test('fresh share-link navigation renders domain and batch reports after DOM boo
   expect(errors).toEqual([]);
 });
 
+test('domain checks stay unstored unless sharing is requested, and revoke deletes the bearer row', async ({ page }) => {
+  const report = domainReport('v=spf1 -all');
+  report.share = { available: false };
+  const sharedId = '1234567890abcdef1234567890abcdef';
+  await page.route('**/api/check', async route => {
+    const body = route.request().postDataJSON();
+    if (body.share) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...report,
+          id: sharedId,
+          share: { available: true, id: sharedId, retentionDays: 14, expiresAt: '2026-08-28T00:00:00.000Z', bearer: true }
+        })
+      });
+    }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(report) });
+  });
+  let deleted = 0;
+  await page.route(`**/api/reports/${sharedId}`, route => {
+    if (route.request().method() === 'DELETE') {
+      deleted += 1;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ revoked: true, id: sharedId })
+      });
+    }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  });
+
+  await page.goto('/');
+  await expect(page.locator('#domain-share')).not.toBeChecked();
+  await page.getByLabel('Domain to check').fill('example.com');
+  await page.getByRole('button', { name: 'Check security' }).click();
+  await expect(page.locator('#domain-report')).toBeVisible();
+  await expect(page.locator('#domain-share-note')).toContainText('not stored');
+  await expect(page.locator('#revoke-share-link')).toBeHidden();
+
+  await page.locator('#domain-share').check();
+  await page.getByRole('button', { name: 'Check security' }).click();
+  await expect(page.locator('#domain-share-note')).toContainText('Public bearer link');
+  await page.locator('#revoke-share-link').click();
+  await expect(page.locator('#domain-share-note')).toContainText('revoked');
+  expect(deleted).toBe(1);
+});
+
 test('an oversized header paste is refused locally without spending an upload', async ({ page }) => {
   // The API caps header bodies at 256 KiB; the client names that limit
   // immediately instead of uploading a body the server must refuse.

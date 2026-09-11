@@ -84,6 +84,13 @@
           <span>No login required</span>
           <span>Results cached up to 5 minutes</span>
         </div>
+        <label class="auth-checkbox" for="domain-share">
+          <input type="checkbox" id="domain-share" name="share">
+          <span class="deps-toggle-text">
+            <strong>Create a shareable link</strong>
+            <small>Stores this report for 14 days under a secret bearer URL. Anyone with the link can read it. Off by default.</small>
+          </span>
+        </label>
       </form>
 
       <div class="loading-panel hidden" id="domain-loading" role="status" aria-live="polite">
@@ -118,6 +125,7 @@
 
           <div class="report-actions">
             <button class="secondary-button" id="copy-share-link" type="button">Share report</button>
+            <button class="secondary-button hidden" id="revoke-share-link" type="button" disabled>Revoke share link</button>
             <button class="secondary-button" id="export-json" type="button">Export JSON</button>
             <button class="secondary-button" id="inspect-from-report" type="button">Inspect SPF</button>
             <button class="secondary-button" id="build-from-report" type="button">Build records</button>
@@ -157,6 +165,13 @@
           <button type="submit" class="primary-button" id="batch-button">Check All Domains</button>
           <button type="button" class="secondary-button" id="batch-clear-btn">Clear</button>
         </div>
+        <label class="auth-checkbox" for="batch-share">
+          <input type="checkbox" id="batch-share" name="share">
+          <span class="deps-toggle-text">
+            <strong>Create a shareable link</strong>
+            <small>Stores this batch report for 14 days under a secret bearer URL. Anyone with the link can read it. Off by default.</small>
+          </span>
+        </label>
       </form>
 
       <div class="loading-panel hidden" id="batch-loading" role="status" aria-live="polite">
@@ -179,6 +194,7 @@
           </div>
           <div class="report-actions">
             <button class="secondary-button" id="batch-copy-link" type="button">Share report</button>
+            <button class="secondary-button hidden" id="batch-revoke-link" type="button" disabled>Revoke share link</button>
             <button class="secondary-button" id="batch-export" type="button">Export JSON</button>
           </div>
         </header>
@@ -395,7 +411,7 @@
       <div class="principle-grid">
         <article><span>01</span><h3>Observed, not guessed</h3><p>Every conclusion points back to captured DNS records or receiver-reported authentication results.</p></article>
         <article><span>02</span><h3>Clear boundaries</h3><p>Header analysis reflects what the receiver reported, not an independent re-evaluation of the message.</p></article>
-        <article><span>03</span><h3>Headers aren’t stored</h3><p>Pasted headers are processed for this request only and are never stored or logged beyond the analysis.</p></article>
+        <article><span>03</span><h3>Headers aren’t stored</h3><p>Pasted headers are not saved as shareable reports. They are interpreted in memory for this request only.</p></article>
       </div>
       </details>
     </section>
@@ -437,7 +453,7 @@
     <div class="method-list">
       <article><span>DNS</span><div><h3>DNS observation</h3><p>SPF, DKIM, DMARC, MX, and CAA records resolved via DNS-over-HTTPS. Transport security checks MTA-STS and TLS-RPT policies. Batch checks compare up to 3 domains.</p></div></article>
       <article><span>HDR</span><div><h3>Header evidence</h3><p>Header analysis parses Authentication-Results claims, Received-SPF results, DKIM-Signature field shape, message addresses, and Received hops. It does not independently verify a DKIM signature or re-run authentication.</p></div></article>
-      <article><span>ƒ(x)</span><div><h3>Derived finding</h3><p>Interpretation of DNS records and header evidence, with recommendations grounded in published RFCs and current best practice. Reports can be read for up to 14 days; expired rows are removed by an hourly cleanup, and expired links stop working immediately.</p></div></article>
+      <article><span>ƒ(x)</span><div><h3>Derived finding</h3><p>Interpretation of DNS records and header evidence, with recommendations grounded in published RFCs and current best practice. Shared reports can be read for up to 14 days when you opt in; expired rows are removed by an hourly cleanup, and expired or revoked links stop working immediately.</p></div></article>
     </div>
     <p class="dialog-footnote">This tool does not test deliverability, send email, or probe private infrastructure. DKIM selector discovery is best-effort and may not find all active selectors.</p>
   </dialog>

@@ -2,17 +2,40 @@
 // normalization, public-IP admission, quota identity, and the daily reset
 // countdown. No I/O, no worker runtime dependencies — unit-testable as-is.
 const ipaddr = require('ipaddr.js');
+const tldts = require('tldts');
+
+// Special-use / obviously non-public suffixes that tldts still treats as
+// having an eTLD+1. Reject these even when the name is syntactically a FQDN.
+const NON_PUBLIC_SUFFIXES = new Set([
+  'local',
+  'localhost',
+  'internal',
+  'lan',
+  'onion',
+  'invalid',
+  'home',
+  'corp',
+  'private',
+  'localdomain',
+  'intranet'
+]);
 
 function isValidDomain(domain) {
   const value = String(domain || '');
   if (!value || value.length > 253 || value.includes('..') || ipaddr.isValid(value)) return false;
   const labels = value.split('.');
   if (labels.length < 2) return false;
-  return labels.every((label, index) =>
+  const syntaxOk = labels.every((label, index) =>
     label.length >= 1 && label.length <= 63 &&
     /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label) &&
     (index !== labels.length - 1 || /^[a-z0-9-]{2,63}$/i.test(label))
   );
+  if (!syntaxOk) return false;
+  const suffix = labels[labels.length - 1].toLowerCase();
+  if (NON_PUBLIC_SUFFIXES.has(suffix)) return false;
+  // Require a registrable eTLD+1 so a public suffix used as a name (`co.uk`)
+  // is refused without blocking ordinary public DNS names.
+  return Boolean(tldts.getDomain(value, { detectIp: false }));
 }
 
 function normalizeDomain(value) {
@@ -71,6 +94,7 @@ function quotaClientKey(rawIp) {
 module.exports = {
   isPublicIpAddress,
   isValidDomain,
+  NON_PUBLIC_SUFFIXES,
   normalizeDomain,
   quotaClientKey,
   secondsUntilDailyReset

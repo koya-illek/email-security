@@ -40,7 +40,13 @@ test('the domain validator refuses the shapes every surface rejects', () => {
     ['user@example.com', 'email local part'],
     ['example.com/path', 'path'],
     ['ex ample.com', 'whitespace'],
-    ['example.com?', 'query']
+    ['example.com?', 'query'],
+    ['foo.local', 'mDNS .local'],
+    ['printer.localhost', '.localhost'],
+    ['mail.internal', '.internal'],
+    ['fileserver.lan', '.lan'],
+    ['hidden.onion', '.onion'],
+    ['co.uk', 'public suffix used as a name']
   ];
   for (const [input, reason] of refusals) {
     assert.equal(isValidDomain(input), false, `${reason}: ${JSON.stringify(input)} must be refused`);
@@ -85,6 +91,13 @@ test('public-IP gate admits routable addresses and refuses reserved ranges', () 
   assert.equal(isPublicIpAddress('198.51.100.9'), false, 'TEST-NET documentation ranges are not public');
   for (const ip of ['10.0.0.4', '127.0.0.1', '169.254.1.1', '::1', 'not-an-ip', '999.1.1.1']) {
     assert.equal(isPublicIpAddress(ip), false, `${ip} must be refused`);
+  }
+});
+
+test('reserved and special-use suffixes stay refused after syntax would otherwise pass', () => {
+  for (const domain of ['office.lan', 'host.home', 'box.corp', 'gw.private', 'node.localdomain', 'app.intranet']) {
+    assert.equal(isValidDomain(domain), false, `${domain} must be refused as non-public`);
+    assert.equal(normalizeDomain(domain), '', `${domain} must not normalize`);
   }
 });
 

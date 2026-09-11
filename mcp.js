@@ -5,7 +5,7 @@ const MAX_MCP_REQUEST_BYTES = 280 * 1024;
 const MCP_SECURITY_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Accept, MCP-Protocol-Version, MCP-Session-Id, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Accept, MCP-Protocol-Version, MCP-Session-Id',
   'Access-Control-Expose-Headers': 'MCP-Protocol-Version',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Content-Type-Options': 'nosniff',
@@ -139,7 +139,10 @@ function tools() {
       description: 'Inspect public SPF, DKIM selector evidence, DMARC, MX, MTA-STS, TLS-RPT, CAA, and inbound MX reverse-DNS observations for a domain. Use for email security posture; do not present the score as a deliverability guarantee.',
       inputSchema: {
         type: 'object', additionalProperties: false, required: ['domain'],
-        properties: { domain: { type: 'string', maxLength: 253, description: 'Public DNS domain, for example example.com.' } },
+        properties: {
+          domain: { type: 'string', maxLength: 253, description: 'Public DNS domain, for example example.com.' },
+          share: { type: 'boolean', description: 'When true, persist a 14-day bearer report. Default false: analysis is not stored.' }
+        },
       },
       outputSchema: {
         type: 'object',
@@ -189,7 +192,7 @@ function tools() {
     {
       name: 'analyze_email_domains_batch', title: 'Compare email security across domains',
       description: 'Analyze and compare public SPF, DKIM selector evidence, DMARC, MX, and transport posture for up to 3 unique domains. Each domain receives an equal share of the request DNS budget; rows whose share was exhausted report an incomplete request_budget rather than a definitive score.',
-      inputSchema: { type: 'object', additionalProperties: false, required: ['domains'], properties: { domains: { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true, items: { type: 'string', maxLength: 253 } } } },
+      inputSchema: { type: 'object', additionalProperties: false, required: ['domains'], properties: { domains: { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true, items: { type: 'string', maxLength: 253 } }, share: { type: 'boolean', description: 'When true, persist a 14-day bearer batch report. Default false.' } } },
       outputSchema: { type: 'object', required: ['_reportType', 'domains', 'results', 'created_at', 'validation', 'request_budget', 'share'], properties: { _reportType: { type: 'string', enum: ['batch'] }, domains: { type: 'array', items: { type: 'string' } }, results: { type: 'array', items: { type: 'object' } }, created_at: { type: 'string', format: 'date-time' }, source_revision: { type: 'string' }, id: { type: 'string' }, validation: { type: 'object' }, request_budget: { type: 'object' }, share: { type: 'object' } } },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -202,8 +205,8 @@ function tools() {
     },
     {
       name: 'evaluate_spf', title: 'Evaluate SPF for a sender',
-      description: 'Evaluate an SPF policy for a client IP, envelope sender, and HELO using RFC processing and bounded DNS lookup limits. An optional record evaluates a proposed policy without publishing it.',
-      inputSchema: { type: 'object', additionalProperties: false, required: ['ip'], properties: { ip: { type: 'string', maxLength: 45, description: 'Public IPv4 or IPv6 address of the connecting sender.' }, sender: { type: 'string', maxLength: 320 }, helo: { type: 'string', maxLength: 253 }, domain: { type: 'string', maxLength: 253 }, record: { type: 'string', maxLength: 4096 } }, anyOf: [{ required: ['domain'] }, { required: ['sender'] }] },
+      description: 'Evaluate an SPF policy for a client IP, envelope sender, and HELO using RFC processing and bounded DNS lookup limits. An optional record evaluates a proposed policy without publishing it. Unlike hop enrichment, the client IP may be private or documentation-range so lab fixtures can be evaluated; this is not a network probe.',
+      inputSchema: { type: 'object', additionalProperties: false, required: ['ip'], properties: { ip: { type: 'string', maxLength: 45, description: 'IPv4 or IPv6 address of the connecting sender. Private, loopback, and documentation ranges are accepted for lab evaluation; hop enrichment still requires public addresses.' }, sender: { type: 'string', maxLength: 320 }, helo: { type: 'string', maxLength: 253 }, domain: { type: 'string', maxLength: 253 }, record: { type: 'string', maxLength: 4096 } }, anyOf: [{ required: ['domain'] }, { required: ['sender'] }] },
       outputSchema: { type: 'object', required: ['status', 'lookups', 'request_budget'], properties: { status: { type: 'object' }, lookups: { type: 'object' }, request_budget: { type: 'object' } } },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -240,8 +243,8 @@ function tools() {
     },
     {
       name: 'get_email_security_report', title: 'Retrieve an email security report',
-      description: 'Retrieve a previously created, unexpired single-domain or batch report by its 16-character report ID.',
-      inputSchema: { type: 'object', additionalProperties: false, required: ['reportId'], properties: { reportId: { type: 'string', pattern: '^[A-Za-z0-9_-]{16}$' } } },
+      description: 'Retrieve a previously created, unexpired single-domain or batch report by its bearer report ID (32 hex characters for new reports; legacy 16-character ids still work until they expire). This tool consumes the report retrieval quota, not the analysis quota.',
+      inputSchema: { type: 'object', additionalProperties: false, required: ['reportId'], properties: { reportId: { type: 'string', pattern: '^[A-Za-z0-9_-]{16}(?:[A-Za-z0-9_-]{16})?$' } } },
       outputSchema: { type: 'object', additionalProperties: true },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -309,4 +312,4 @@ function rpc(payload, status = 200, version = MCP_PROTOCOL_VERSION) {
   });
 }
 
-module.exports = { handleMcp };
+module.exports = { handleMcp, MAX_MCP_REQUEST_BYTES };

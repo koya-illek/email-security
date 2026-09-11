@@ -16,13 +16,13 @@ const { runScheduledCleanup } = require('./retention');
 const {
   REPORT_ID_RE,
   REPORT_RETENTION_DAYS,
-  generateReportId,
+  deleteReport,
   loadReport,
   reportExpiry,
   reportShareMetadata,
   storeReport
 } = require('./report-store');
-const { handleMcp } = require('./mcp');
+const { handleMcp, MAX_MCP_REQUEST_BYTES } = require('./mcp');
 const {
   assessReportAuthorisation,
   isExternalReportDestination,
@@ -62,11 +62,12 @@ const DOH_PROVIDERS = [
 ];
 
 const CACHE_TTL = 300; // Recheck changed DNS after at most five minutes.
+const INCONCLUSIVE_CACHE_TTL = 180; // Shorter window for zero-score / timeout analyses.
 const POLICY_CACHE_TTL = 300;
 // Bump this key whenever report semantics change so a release cannot replay a
 // 24-hour row produced by older analysis code. v11 adds external DMARC report
 // authorisation evidence and RFC 9989 version-token handling.
-const CACHE_VERSION = 'v12-five-minute-observations';
+const CACHE_VERSION = 'v13-opt-in-share-inconclusive-cache';
 const DNS_TIMEOUT_MS = 4500;
 // Wall-clock ceiling for one analysis: sequential phases over slow or
 // failing resolvers must degrade to inconclusive evidence instead of
@@ -83,6 +84,7 @@ const REQUEST_SUBREQUEST_LIMIT = 45;
 const RATE_LIMIT_RETRY_AFTER_SECONDS = 60;
 const STANDARD_RATE_LIMITER_BINDING = 'STANDARD_RATE_LIMITER';
 const EXPENSIVE_RATE_LIMITER_BINDING = 'EXPENSIVE_RATE_LIMITER';
+const MCP_RATE_LIMITER_BINDING = 'MCP_RATE_LIMITER';
 // Batch rows share one platform subrequest cap, so each domain only receives
 // an even slice of the 45-subrequest budget. Live verification showed four
 // well-configured domains exhausted the whole budget and later rows scored
@@ -104,9 +106,7 @@ const EXPENSIVE_POST_PATHS = new Set([
   // evaluation, so they cost as much as inspect and belong behind the same
   // expensive limiter.
   '/api/records/validate',
-  '/api/v2/record-build',
-  '/mcp',
-  '/mcp/v2'
+  '/api/v2/record-build'
 ]);
 const MCP_PATHS = new Set(['/mcp', '/mcp/v2']);
 // Every REST path a POST can actually reach. The rate-limit gate matches
@@ -187,7 +187,7 @@ function createRequestBudget(limit = REQUEST_SUBREQUEST_LIMIT, deadline = null) 
   };
 }
 
-async function createDomainReport(domain, env, budget = createRequestBudget(REQUEST_SUBREQUEST_LIMIT, Date.now() + ANALYSIS_WALL_MS)) {
+async function createDomainReport(domain, env, budget = createRequestBudget(REQUEST_SUBREQUEST_LIMIT, Date.now() + ANALYSIS_WALL_MS), options = {}) {
   const cacheKey = new Request(`https://cache.internal/${CACHE_VERSION}/${domain}`);
   const cache = caches.default;
   let analysis;
@@ -203,14 +203,16 @@ async function createDomainReport(domain, env, budget = createRequestBudget(REQU
     analysis = storedAnalysis;
   } else {
     analysis = await analyzeDomain(domain, budget);
-    if (analysis.overall_score > 0) {
-      await cache.put(cacheKey, new Response(JSON.stringify(analysis), {
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': `public, max-age=${CACHE_TTL}`
-        }
-      }));
-    }
+    // Cache determinate and inconclusive/zero-score results so SERVFAIL and
+    // timeout storms do not replay the full DoH ladder on every retry.
+    // Inconclusive rows use a slightly shorter window.
+    const cacheTtl = analysis.overall_score > 0 ? CACHE_TTL : INCONCLUSIVE_CACHE_TTL;
+    await cache.put(cacheKey, new Response(JSON.stringify(analysis), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': `public, max-age=${cacheTtl}`
+      }
+    }));
   }
 
   analysis.freshness = {
@@ -219,12 +221,15 @@ async function createDomainReport(domain, env, budget = createRequestBudget(REQU
     cached: Boolean(cached)
   };
   analysis._reportType = 'domain';
-  const reportId = await storeReport(env, analysis);
-  if (reportId) analysis.id = reportId;
-  // Every response stores its own row, so each requester receives a share
-  // link whose expiry starts now and whose availability reflects storage
-  // as of this request — a D1 blip cannot pin available:false into the
-  // shared cache entry for a day.
+  // Persist only when the caller asked to share. Cache hits must not mint a
+  // new D1 row for a requester who did not opt in.
+  let reportId = null;
+  if (requestedShare(options.share)) {
+    reportId = await storeReport(env, analysis);
+    if (reportId) analysis.id = reportId;
+  } else {
+    delete analysis.id;
+  }
   analysis.share = reportShareMetadata(reportId, reportId ? reportExpiry() : null, Boolean(reportId));
   analysis.request_budget = budget.snapshot();
   return analysis;
@@ -252,7 +257,7 @@ function validateBatchDomains(domains) {
   return { accepted, rejected };
 }
 
-async function createBatchReport(domains, env, requestBudget = null) {
+async function createBatchReport(domains, env, requestBudget = null, options = {}) {
   const validation = validateBatchDomains(domains);
   const uniqueDomains = validation.accepted;
   if (!uniqueDomains.length) throw new InvalidRequestError('At least one valid public domain is required');
@@ -308,8 +313,13 @@ async function createBatchReport(domains, env, requestBudget = null) {
       exhausted: results.some(row => row.request_budget?.exhausted)
     }
   };
-  const reportId = await storeReport(env, report);
-  if (reportId) report.id = reportId;
+  let reportId = null;
+  if (requestedShare(options.share)) {
+    reportId = await storeReport(env, report);
+    if (reportId) report.id = reportId;
+  } else {
+    delete report.id;
+  }
   report.share = reportShareMetadata(reportId, reportId ? reportExpiry() : null, Boolean(reportId));
   return report;
 }
@@ -467,8 +477,10 @@ async function handleRequest(request, env) {
   // CORS headers
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, MCP-Protocol-Version, MCP-Session-Id',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    // Authorization is unused on this public surface; advertising it would
+    // invite clients to send secrets the Worker never inspects.
+    'Access-Control-Allow-Headers': 'Content-Type, Accept',
     // Retry-After and Allow are part of the documented 429/405 contract, so
     // cross-origin browser clients must be allowed to read them.
     'Access-Control-Expose-Headers': 'MCP-Protocol-Version, X-Report-Retention-Days, Retry-After, Allow'
@@ -497,9 +509,19 @@ async function handleRequest(request, env) {
         batchCheck: 'POST /api/batch', spfInspect: 'POST /api/spf/inspect', spfEvaluate: 'POST /api/spf/evaluate',
         recordValidate: 'POST /api/records/validate', recordBuild: 'POST /api/v2/record-build', headerEnrich: 'POST /api/header/enrich',
         getReport: 'GET /api/reports/:id', exportReport: 'GET /api/reports/:id/export',
+        revokeReport: 'DELETE /api/reports/:id',
         legacyDomainCheck: 'POST /api/check', mcp: 'POST /mcp (also /mcp/v2)',
       },
     }, 200, { ...securityHeaders, ...corsHeaders });
+  }
+
+  if (request.method === 'POST' && POST_API_PATHS.has(routePathname)) {
+    // application/json is not CORS-safelisted, so browsers preflight. Reject
+    // text/plain (and other types) before quota so simple CORS requests cannot
+    // burn colo analysis capacity.
+    if (!hasJsonContentType(request)) {
+      return jsonResponse({ error: 'Content-Type must be application/json' }, 415, corsHeaders);
+    }
   }
 
   if (request.method === 'POST' && (POST_API_PATHS.has(routePathname) || MCP_PATHS.has(routePathname))) {
@@ -530,18 +552,30 @@ async function handleRequest(request, env) {
       );
     }
     try {
-      const dailySuccess = await consumeDailyRateLimit(request, env, 'post', Number(env.DAILY_POST_LIMIT) || 500);
-      if (!dailySuccess) return jsonResponse({ error: 'Daily API request limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(secondsUntilDailyReset()) });
+      if (MCP_PATHS.has(routePathname)) {
+        const denied = await mcpDailyQuotaLimit(request, env);
+        if (denied === 'report') {
+          return jsonResponse({ error: 'Daily report retrieval limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(secondsUntilDailyReset()) });
+        }
+        if (denied === 'analysis') {
+          return jsonResponse({ error: 'Daily MCP request limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(secondsUntilDailyReset()) });
+        }
+      } else {
+        const dailySuccess = await consumeDailyRateLimit(request, env, 'post', Number(env.DAILY_POST_LIMIT) || 500);
+        if (!dailySuccess) return jsonResponse({ error: 'Daily API request limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(secondsUntilDailyReset()) });
+      }
     } catch (error) {
-      // A D1 outage must not take stateless endpoints down with report
-      // storage; degrade to stateless service — observably.
+      // Daily accounting is a durable cap. Fail closed for analysis POSTs
+      // (and MCP tool calls) the same way report GET fails closed: a D1
+      // outage must not silently lift the daily quota.
       console.error(JSON.stringify({
         level: 'error',
-        message: 'Daily quota accounting degraded to stateless service',
+        message: 'Daily quota accounting unavailable; refusing analysis',
         path: routePathname,
         errorName: error?.name || 'Unknown',
         detail: String(error?.message || error)
       }));
+      return jsonResponse({ error: 'Quota accounting is temporarily unavailable. Try again shortly.' }, 503, corsHeaders);
     }
   }
 
@@ -554,7 +588,7 @@ async function handleRequest(request, env) {
       }
       if (tool === 'analyze_email_domains_batch') {
         if (!Array.isArray(args.domains)) throw exposedError('domains must be an array');
-        return createBatchReport(args.domains, env, requestBudget);
+        return createBatchReport(args.domains, env, requestBudget, { share: requestedShare(args.share) });
       }
       if (tool === 'inspect_spf') {
         const domain = normalizeDomain(args.domain);
@@ -595,21 +629,21 @@ async function handleRequest(request, env) {
       }
       if (tool === 'get_email_security_report') {
         const reportId = String(args.reportId || '');
-        if (!REPORT_ID_RE.test(reportId)) throw exposedError('A valid 16-character report ID is required');
+        if (!REPORT_ID_RE.test(reportId)) throw exposedError('A valid report ID is required');
         const report = await loadReport(env, reportId);
         if (!report) throw exposedError('Report not found or expired');
         return report;
       }
       const cleanDomain = normalizeDomain(args.domain);
       if (!cleanDomain || !isValidDomain(cleanDomain)) throw exposedError('A valid public domain is required');
-      return createDomainReport(cleanDomain, env, requestBudget);
+      return createDomainReport(cleanDomain, env, requestBudget, { share: requestedShare(args.share) });
     });
   }
 
   // API endpoint
   if ((routePathname === '/api/check' || routePathname === '/api/v2/domain-check') && request.method === 'POST') {
     try {
-      const { domain } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
+      const { domain, share } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
       if (!domain) {
         return jsonResponse({ error: 'Domain required' }, 400, corsHeaders);
       }
@@ -620,7 +654,7 @@ async function handleRequest(request, env) {
         return jsonResponse({ error: 'Invalid domain' }, 400, corsHeaders);
       }
 
-      const report = await createDomainReport(cleanDomain, env, requestBudget);
+      const report = await createDomainReport(cleanDomain, env, requestBudget, { share: requestedShare(share) });
       return jsonResponse(report, 200, corsHeaders);
     } catch (err) {
       const limited = bodyLimitResponse(err, corsHeaders);
@@ -739,13 +773,16 @@ async function handleRequest(request, env) {
     }
   }
 
-  // GET /api/reports/:id — load a stored report. The id shape is validated
-  // before any quota accounting: a malformed path can never reach storage,
-  // so it must not spend one of the caller's daily retrievals. HEAD shares
-  // the GET response; the runtime strips the body.
+  // GET/HEAD /api/reports/:id — load a stored report. DELETE revokes it.
+  // The id shape is validated before any quota accounting: a malformed path
+  // can never reach storage, so it must not spend one of the caller's daily
+  // retrievals. HEAD shares the GET response; the runtime strips the body.
   const reportMatch = routePathname.match(/^\/api\/reports\/([A-Za-z0-9_-]+)(\/export)?$/);
   let validReportId = null;
-  if ((request.method === 'GET' || request.method === 'HEAD') && reportMatch) {
+  const reportIsExport = Boolean(reportMatch?.[2]);
+  const reportRead = request.method === 'GET' || request.method === 'HEAD';
+  const reportRevoke = request.method === 'DELETE' && reportMatch && !reportIsExport;
+  if ((reportRead || reportRevoke) && reportMatch) {
     const candidate = reportMatch[1];
     if (!REPORT_ID_RE.test(candidate)) {
       return jsonResponse({ error: 'Report not found' }, 404, corsHeaders);
@@ -755,6 +792,21 @@ async function handleRequest(request, env) {
 
   if (validReportId) {
     try {
+      const retryAfter = await consumeClientRateLimit(request, STANDARD_RATE_LIMITER_BINDING, env);
+      if (retryAfter !== null) {
+        return jsonResponse({ error: 'Too many requests. Please retry later.' }, 429, { ...corsHeaders, 'Retry-After': String(retryAfter) });
+      }
+    } catch (error) {
+      console.error(JSON.stringify({
+        level: 'error',
+        message: 'Report rate limiter unavailable',
+        path: routePathname,
+        errorName: error?.name || 'Unknown',
+        detail: String(error?.message || error)
+      }));
+      return jsonResponse({ error: 'Rate limiting is unavailable.' }, 503, { ...corsHeaders, 'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS) });
+    }
+    try {
       const success = await consumeDailyRateLimit(request, env, 'report', Number(env.REPORT_DAILY_LIMIT) || 120);
       if (!success) return jsonResponse({ error: 'Daily report retrieval limit reached.' }, 429, { ...corsHeaders, 'Retry-After': String(secondsUntilDailyReset()) });
     } catch {
@@ -762,6 +814,19 @@ async function handleRequest(request, env) {
       // actually happened instead of blaming rate limiting.
       return jsonResponse({ error: 'Report retrieval is temporarily unavailable. Try again shortly.' }, 503, corsHeaders);
     }
+  }
+
+  if (validReportId && reportRevoke) {
+    let removed;
+    try {
+      removed = await deleteReport(env, validReportId);
+    } catch (err) {
+      return requestErrorResponse(err, corsHeaders, 503);
+    }
+    if (!removed) {
+      return jsonResponse({ error: 'Report not found or expired' }, 404, corsHeaders);
+    }
+    return jsonResponse({ revoked: true, id: validReportId }, 200, { ...corsHeaders, 'Cache-Control': 'private, no-store' });
   }
 
   if (validReportId) {
@@ -797,8 +862,8 @@ async function handleRequest(request, env) {
   // POST /api/batch — batch domain check
   if (routePathname === '/api/batch' && request.method === 'POST') {
     try {
-      const { domains } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
-      const batchReport = await createBatchReport(domains, env, requestBudget);
+      const { domains, share } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
+      const batchReport = await createBatchReport(domains, env, requestBudget, { share: requestedShare(share) });
       return jsonResponse(batchReport, 200, corsHeaders);
     } catch (err) {
       // Same status policy as every analysis route: validation failures keep
@@ -831,7 +896,10 @@ async function handleRequest(request, env) {
   }
   // Report routes are dynamic, so they sit outside the static method table;
   // wrong verbs still answer 405 with Allow like every other resource.
-  if (/^\/api\/reports\/[A-Za-z0-9_-]+(\/export)?$/.test(routePathname) && request.method !== 'GET' && request.method !== 'HEAD') {
+  if (/^\/api\/reports\/[A-Za-z0-9_-]+$/.test(routePathname) && request.method !== 'GET' && request.method !== 'HEAD' && request.method !== 'DELETE') {
+    return jsonResponse({ error: `Method ${request.method} is not allowed for ${routePathname}` }, 405, { ...corsHeaders, Allow: 'GET, HEAD, DELETE' });
+  }
+  if (/^\/api\/reports\/[A-Za-z0-9_-]+\/export$/.test(routePathname) && request.method !== 'GET' && request.method !== 'HEAD') {
     return jsonResponse({ error: `Method ${request.method} is not allowed for ${routePathname}` }, 405, { ...corsHeaders, Allow: 'GET, HEAD' });
   }
   if (routePathname.startsWith('/api/') || MCP_PATHS.has(routePathname)) {
@@ -977,10 +1045,16 @@ function bodyLimitResponse(error, corsHeaders) {
 
 
 
-async function consumePostRateLimit(request, pathname, env) {
-  const bindingName = EXPENSIVE_POST_PATHS.has(pathname)
-    ? EXPENSIVE_RATE_LIMITER_BINDING
-    : STANDARD_RATE_LIMITER_BINDING;
+function requestedShare(value) {
+  return value === true;
+}
+
+function hasJsonContentType(request) {
+  const contentType = (request.headers.get('Content-Type') || '').toLowerCase().split(';')[0].trim();
+  return contentType === 'application/json';
+}
+
+async function consumeClientRateLimit(request, bindingName, env) {
   const limiter = env?.[bindingName];
   if (!limiter || typeof limiter.limit !== 'function') {
     throw new Error(`${bindingName} binding is not configured`);
@@ -989,6 +1063,36 @@ async function consumePostRateLimit(request, pathname, env) {
   const client = quotaClientKey(request.headers.get('CF-Connecting-IP') || 'anonymous');
   const { success } = await limiter.limit({ key: client });
   return success ? null : RATE_LIMIT_RETRY_AFTER_SECONDS;
+}
+
+async function consumePostRateLimit(request, pathname, env) {
+  const bindingName = MCP_PATHS.has(pathname)
+    ? MCP_RATE_LIMITER_BINDING
+    : EXPENSIVE_POST_PATHS.has(pathname)
+      ? EXPENSIVE_RATE_LIMITER_BINDING
+      : STANDARD_RATE_LIMITER_BINDING;
+  return consumeClientRateLimit(request, bindingName, env);
+}
+
+async function mcpDailyQuotaLimit(request, env) {
+  let toolName = null;
+  try {
+    const bytes = await readBodyBytes(request.clone().body, MAX_MCP_REQUEST_BYTES);
+    const message = JSON.parse(new TextDecoder().decode(bytes));
+    if (!message || typeof message !== 'object' || Array.isArray(message) || message.method !== 'tools/call') {
+      return null;
+    }
+    toolName = message.params && typeof message.params === 'object' ? message.params.name : null;
+  } catch {
+    return null;
+  }
+  if (typeof toolName !== 'string') return null;
+  if (toolName === 'get_email_security_report') {
+    const success = await consumeDailyRateLimit(request, env, 'mcp_report', Number(env.MCP_REPORT_DAILY_LIMIT) || 40);
+    return success ? null : 'report';
+  }
+  const success = await consumeDailyRateLimit(request, env, 'mcp', Number(env.MCP_DAILY_LIMIT) || 80);
+  return success ? null : 'analysis';
 }
 
 async function consumeDailyRateLimit(request, env, scope, limit) {
@@ -2899,16 +3003,16 @@ async function fetchMtaStsPolicy(domain, budget = null) {
   }
 
   // A definitive observation (policy fetched, or an HTTP answer such as 404)
-  // may be cached for a day. Transport-level failures — timeouts, aborted
-  // bodies, network errors — are not observations; caching one would pin an
-  // unreachable verdict into the edge cache for 24h, so they stay uncached
+  // is cached for POLICY_CACHE_TTL (five minutes). Transport-level failures
+  // — timeouts, aborted bodies, network errors — are not observations;
+  // caching one would pin an unreachable verdict, so they stay uncached
   // and retry on the next request.
   const durableObservation = result.fetched || (result.status !== null && !result.error);
   if (durableObservation) {
     await cache.put(cacheKey, new Response(JSON.stringify(result), {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': `public, max-age=${POLICY_CACHE_TTL}, stale-while-revalidate=86400`
+        'Cache-Control': `public, max-age=${POLICY_CACHE_TTL}`
       }
     }));
   }

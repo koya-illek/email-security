@@ -92,16 +92,15 @@ negotiates down to the newest supported one, per the lifecycle spec). They
 publish the complete read-only tool set through `tools/list`. Copilot Studio can
 import `https://email.illek.ie/mcp-copilot.yaml`; OpenAPI agents can import
 `https://email.illek.ie/openapi.yaml`. The existing API paths remain compatible.
-Every `tools/call` draws from the 10-per-minute expensive limiter — one-sixth
-of the REST header-analysis class — so bulk header analysis over MCP should
-batch its patience or use the REST endpoint instead.
+Every `tools/call` draws from a dedicated MCP limiter at 6 requests per client per 60 seconds — tighter than the REST expensive class of 10 per minute — and from an 80-call MCP daily analysis cap (REST analysis POSTs remain 500 per UTC day). `get_email_security_report` consumes the MCP report quota (40 per UTC day) rather than the analysis quota. Bulk header analysis over MCP should batch its patience or use the REST endpoint instead.
 
 Domain and batch reports include `source_revision`, DNS/provider observations,
 `score_confidence`, and an explicit `request_budget`. DNS timeouts and provider
 failures are reported as unknown observations and do not receive a definitive
-failure score. Stored report links are bearer links, expire after 14 days, and
-are served with `Cache-Control: private, no-store`; do not put sensitive data in
-header or domain inputs.
+failure score. Reports are stored only when `share` is true. Stored report links
+are 128-bit bearer ids, expire after 14 days, can be revoked with
+`DELETE /api/reports/{id}`, and are served with `Cache-Control: private, no-store`;
+do not put sensitive data in header or domain inputs.
 
 ```bash
 curl -X POST https://email.illek.ie/api/check \
@@ -122,7 +121,9 @@ unresolved mechanisms are preserved and flagged for manual review. Copying is
 enabled only for the restricted positive-IP/include subset for which the tool
 can preserve the original terminal result; redirects are never flattened.
 
-Evaluate a sender using the standards engine:
+Evaluate a sender using the standards engine. The client IP may be a
+documentation or private address for lab fixtures; hop enrichment still
+requires public addresses:
 
 ```bash
 curl -X POST https://email.illek.ie/api/spf/evaluate \
@@ -178,9 +179,9 @@ globally routable IPv4 or IPv6 addresses.
 
 - **Workers Free**: 100,000 requests/day, 10 ms CPU time, 128 MB memory, 3 MB compressed Worker size, and 50 external subrequests per invocation
 - **Worker header analysis**: zero external subrequests; local worst-case 256 KB parsing benchmark averages below 1 ms (hardware-dependent)
-- **API rate limits**: every POST analysis endpoint and MCP tool call sits behind the expensive limiter at 10 requests per client per 60 seconds (the REST twin of MCP's `analyze_email_headers` is the one exception, on the standard 60-per-minute class); daily caps add 500 analysis POSTs and 120 report retrievals per client per UTC day, with `Retry-After` counting down to the real reset. IPv6 clients share one quota bucket per /64 so rotating addresses cannot mint fresh budgets. Cloudflare Rate Limiting counters are shared across Worker isolates but scoped to the serving location, so these are not strict global quotas.
+- **API rate limits**: REST header analysis and report reads sit behind the standard limiter at 60 requests per client per 60 seconds; other REST analysis POSTs use the expensive limiter at 10 per minute. MCP HTTP requests use a dedicated 6-per-minute limiter. Daily caps add 500 REST analysis POSTs, 80 MCP analysis tool calls, 120 REST report retrievals, and 40 MCP report retrievals per client per UTC day, with `Retry-After` counting down to the real reset. `get_email_security_report` consumes the MCP report quota, not the analysis quota. When D1 daily accounting fails, analysis POSTs fail closed with 503 instead of running uncapped. IPv6 clients share one quota bucket per /64 so rotating addresses cannot mint fresh budgets. Cloudflare Rate Limiting counters are shared across Worker isolates but scoped to the serving location, so these are not strict global quotas.
 - **Request budget**: each analysis invocation reserves at most 45 outbound subrequests, leaving platform headroom below the Workers limit of 50. Batch analysis accepts at most 3 domains — each receives an equal slice of the budget and rows whose slice was exhausted carry an exhausted `request_budget` instead of a comparable score — and reports rejected items individually.
-- **Stored reports**: share links are bearer links with 14-day retention. Retrieval and export responses are private and not cacheable.
+- **Stored reports**: sharing is opt-in (`share: true` or the UI checkbox). Share links are 128-bit bearer credentials with 14-day retention and can be revoked with `DELETE /api/reports/{id}`. Retrieval, export, and revoke responses are private and not cacheable. REST analysis POSTs require `Content-Type: application/json`.
 
 ## Local Development
 
@@ -190,5 +191,7 @@ npm test
 npm run test:browser
 wrangler dev
 ```
+
+`npm test` is the CI gate. `npm run test:browser` (Playwright) is a release-time UI check; run it before shipping frontend changes. `scripts/verify-release.mjs` remains the post-deploy production probe (health, HTML/contract audit, two DMARC validations) and does not launch Playwright against production.
 
 Opens at `http://localhost:8787`

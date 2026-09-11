@@ -77,11 +77,13 @@
 
   // Restore tab from hash, checking for a report ID first
   const knownTabs = ["domain", "batch", "spf", "builder", "headers"];
+  // New reports are 32 hex chars; legacy 16-character bearer ids still load.
+  const REPORT_ID_PATTERN = /^[A-Za-z0-9_-]{16}(?:[A-Za-z0-9_-]{16})?$/;
   const hashVal = location.hash.slice(1);
   let initialTab = "domain";
 
-  // If hash looks like a report ID (16 chars), load it
-  if (/^[A-Za-z0-9_-]{16}$/.test(hashVal)) {
+  // If hash looks like a report ID, load it
+  if (REPORT_ID_PATTERN.test(hashVal)) {
     // DOM references used by loadSharedReport are declared below. Queue the
     // boot read until this script has finished initializing them.
     queueMicrotask(() => loadSharedReport(hashVal));
@@ -255,9 +257,21 @@
       const url = `${location.origin}/#${lastDomainReport.id}`;
       flashCopyState(btn, await copyText(url));
     } else {
-      setShareUnavailable($("#domain-share-note"), btn);
+      applyShareUi({
+        note: $("#domain-share-note"),
+        shareButton: btn,
+        revokeButton: $("#revoke-share-link"),
+        share: lastDomainReport?.share,
+        state: "not-requested"
+      });
     }
   });
+
+  $("#revoke-share-link")?.addEventListener("click", () => revokeShare(lastDomainReport, {
+    note: $("#domain-share-note"),
+    shareButton: $("#copy-share-link"),
+    revokeButton: $("#revoke-share-link")
+  }));
 
   $("#export-json")?.addEventListener("click", () => {
     if (lastDomainReport?.id) {
@@ -386,7 +400,7 @@
         const r = await fetch(`${API_BASE}/api/check`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domain }),
+          body: JSON.stringify({ domain, share: Boolean($("#domain-share")?.checked) }),
         });
         const d = await parseApiResponse(r, "domain check");
         if (generation !== domainGeneration.current()) return;
@@ -462,14 +476,13 @@
     confidenceNote.textContent = `Score confidence: ${d.score_confidence || "unknown"}. ${unknownControls.length ? `Inconclusive controls: ${unknownControls.join(", ")}. Retry before changing DNS.` : "All scored controls returned a determinate observation."}`;
     confidenceNote.classList.toggle("warning", unknownControls.length > 0);
     $("#domain-observation").open = unknownControls.length > 0;
-    if (d.share?.available && d.share.expiresAt) {
-      shareNote.textContent = `Anyone with this link can view the report until ${longDate(d.share.expiresAt)}. Share it only with intended recipients.`;
-      shareNote.classList.remove("warning");
-      shareButton.disabled = false;
-      shareButton.textContent = "Share report";
-    } else {
-      setShareUnavailable(shareNote, shareButton);
-    }
+    applyShareUi({
+      note: shareNote,
+      shareButton,
+      revokeButton: $("#revoke-share-link"),
+      share: d.share,
+      state: d.share?.available ? "available" : ($("#domain-share")?.checked ? "failed" : "not-requested")
+    });
 
     // Metrics
     const score = Number.isFinite(d.overall_score) ? d.overall_score : null;
@@ -513,14 +526,73 @@
     );
   }
 
-  function setShareUnavailable(note, button) {
-    if (note) {
+  function applyShareUi({ note, shareButton, revokeButton, share, state }) {
+    const available = Boolean(share?.available && share.expiresAt);
+    if (available) {
+      if (note) {
+        note.textContent = `Public bearer link: anyone with this URL can view the report until ${longDate(share.expiresAt)}. Revoke it if the link was shared too widely.`;
+        note.classList.remove("warning");
+      }
+      if (shareButton) {
+        shareButton.disabled = false;
+        shareButton.textContent = "Share report";
+      }
+      if (revokeButton) {
+        revokeButton.disabled = false;
+        revokeButton.classList.remove("hidden");
+      }
+      return;
+    }
+    if (revokeButton) {
+      revokeButton.disabled = true;
+      revokeButton.classList.add("hidden");
+    }
+    if (shareButton) {
+      shareButton.disabled = true;
+      shareButton.textContent = "Share unavailable";
+    }
+    if (!note) return;
+    if (state === "revoked") {
+      note.textContent = "Share link revoked. The bearer URL no longer retrieves this report.";
+      note.classList.add("warning");
+    } else if (state === "not-requested") {
+      note.textContent = "This result was not stored. Enable “Create a shareable link” before checking to mint a 14-day bearer URL.";
+      note.classList.remove("warning");
+    } else {
       note.textContent = "Share link unavailable because report storage did not complete. Export the result locally if needed.";
       note.classList.add("warning");
     }
-    if (button) {
-      button.disabled = true;
-      button.textContent = "Share unavailable";
+  }
+
+  async function revokeShare(report, { note, shareButton, revokeButton, hashPrefix = "" }) {
+    if (!report?.id) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/reports/${report.id}`, { method: "DELETE" });
+      const d = await parseApiResponse(r, "report");
+      if (!r.ok && r.status !== 404) throw new Error(d.error || "The share link could not be revoked.");
+      const id = report.id;
+      report.id = null;
+      if (report.share) {
+        report.share.available = false;
+        report.share.id = null;
+        report.share.expiresAt = null;
+      }
+      const expected = hashPrefix ? `${hashPrefix}${id}` : id;
+      if (location.hash.slice(1) === expected) {
+        history.replaceState(null, "", `${location.pathname}${location.search}`);
+      }
+      applyShareUi({ note, shareButton, revokeButton, share: report.share, state: "revoked" });
+      if (revokeButton) {
+        if (!revokeButton.dataset.label) revokeButton.dataset.label = "Revoke share link";
+        revokeButton.textContent = "Revoked";
+        clearTimeout(revokeButton._copyTimer);
+        revokeButton._copyTimer = setTimeout(() => { revokeButton.textContent = revokeButton.dataset.label; }, 2000);
+      }
+    } catch (err) {
+      if (note) {
+        note.textContent = err.message || "The share link could not be revoked. Try again shortly.";
+        note.classList.add("warning");
+      }
     }
   }
 
@@ -1544,7 +1616,7 @@
       const r = await fetch(`${API_BASE}/api/batch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domains })
+        body: JSON.stringify({ domains, share: Boolean($("#batch-share")?.checked) })
       });
       const d = await parseApiResponse(r, "batch check");
       if (generation !== batchGeneration.current()) return;
@@ -1582,6 +1654,13 @@
       updateBatchShareState(lastBatchReport);
     }
   });
+
+  $("#batch-revoke-link")?.addEventListener("click", () => revokeShare(lastBatchReport, {
+    note: $("#batch-share-note"),
+    shareButton: $("#batch-copy-link"),
+    revokeButton: $("#batch-revoke-link"),
+    hashPrefix: "batch-"
+  }));
 
   $("#batch-export")?.addEventListener("click", () => {
     if (lastBatchReport?.id) {
@@ -1722,19 +1801,13 @@
   }
 
   function updateBatchShareState(report) {
-    const note = $("#batch-share-note");
-    const button = $("#batch-copy-link");
-    if (report?.share?.available && report.share.expiresAt) {
-      note.textContent = `Anyone with this link can view the batch report until ${longDate(report.share.expiresAt)}. Share it only with intended recipients.`;
-      note.classList.remove("warning");
-      button.disabled = false;
-      button.textContent = "Share report";
-    } else {
-      note.textContent = "Share link unavailable because report storage did not complete. Export the result locally if needed.";
-      note.classList.add("warning");
-      button.disabled = true;
-      button.textContent = "Share unavailable";
-    }
+    applyShareUi({
+      note: $("#batch-share-note"),
+      shareButton: $("#batch-copy-link"),
+      revokeButton: $("#batch-revoke-link"),
+      share: report?.share,
+      state: report?.share?.available ? "available" : ($("#batch-share")?.checked ? "failed" : "not-requested")
+    });
   }
 
   function batchStatusCell(cat) {
@@ -1747,7 +1820,7 @@
   }
 
   // Check for batch report in URL hash (#batch-<id>)
-  const batchHashMatch = location.hash.match(/^#batch-([A-Za-z0-9_-]{16})$/);
+  const batchHashMatch = location.hash.match(/^#batch-([A-Za-z0-9_-]{16}(?:[A-Za-z0-9_-]{16})?)$/);
   if (batchHashMatch) {
     queueMicrotask(() => loadSharedReport(batchHashMatch[1], { prefer: "batch" }));
   }
@@ -1759,12 +1832,12 @@
   // fires this event, so the two paths cannot loop.
   window.addEventListener("hashchange", () => {
     const h = location.hash.slice(1);
-    const batchMatch = h.match(/^batch-([A-Za-z0-9_-]{16})$/);
+    const batchMatch = h.match(/^batch-([A-Za-z0-9_-]{16}(?:[A-Za-z0-9_-]{16})?)$/);
     if (batchMatch) {
       loadSharedReport(batchMatch[1], { prefer: "batch" });
       return;
     }
-    if (/^[A-Za-z0-9_-]{16}$/.test(h)) {
+    if (REPORT_ID_PATTERN.test(h)) {
       loadSharedReport(h);
       return;
     }

@@ -1,7 +1,7 @@
 swagger: '2.0'
 info:
   title: Email Security Checker MCP
-  description: Full read-only Email Security toolset for single and batch domain posture, SPF inspection and evaluation, SPF or DMARC validation, received-header analysis and hop enrichment, and stored-report retrieval. The Streamable HTTP endpoint negotiates MCP protocol versions 2025-11-25, 2025-06-18, and 2024-11-05. Reports include uncertainty and request-budget evidence; stored links are bearer links retained for 14 days and served privately. Full REST and result schemas are at https://email.illek.ie/openapi.yaml.
+  description: Full read-only Email Security toolset for single and batch domain posture, SPF inspection and evaluation, SPF or DMARC validation, received-header analysis and hop enrichment, and stored-report retrieval. Domain and batch tools persist a bearer report only when share is true. The Streamable HTTP endpoint negotiates MCP protocol versions 2025-11-25, 2025-06-18, and 2024-11-05. MCP traffic uses tighter per-minute and daily quotas than REST; get_email_security_report consumes the report quota. Full REST and result schemas are at https://email.illek.ie/openapi.yaml.
   version: 2.0.0
 host: email.illek.ie
 basePath: /

@@ -1,0 +1,27 @@
+# CI for email-security-checker
+#
+# `npm test` is the required gate on every push and pull request.
+# Playwright (`npm run test:browser`) is a release-time UI check: run it
+# locally before shipping frontend changes. It is not part of this job
+# because it needs a headed browser install and is slower than the unit
+# plus wrangler-local conformance suite. `scripts/verify-release.mjs`
+# remains the post-deploy production probe and also does not launch
+# Playwright against the live host.
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test

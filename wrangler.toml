@@ -23,6 +23,9 @@ ENVIRONMENT = "production"
 SOURCE_REVISION = "unpinned"
 DAILY_POST_LIMIT = "500"
 REPORT_DAILY_LIMIT = "120"
+# MCP stays open for testing, with tighter daily caps than REST.
+MCP_DAILY_LIMIT = "80"
+MCP_REPORT_DAILY_LIMIT = "40"
 
 # Remove expired shareable reports on a regular schedule. Expired links stop
 # working at expires_at even if the next cleanup invocation is still pending.
@@ -45,6 +48,16 @@ namespace_id = "1002"
 
   [ratelimits.simple]
   limit = 10
+  period = 60
+
+# MCP tool calls share a tighter per-minute bucket than REST expensive routes
+# so agent loops cannot match the REST analysis rate.
+[[ratelimits]]
+name = "MCP_RATE_LIMITER"
+namespace_id = "1003"
+
+  [ratelimits.simple]
+  limit = 6
   period = 60
 
 # D1 database for shareable reports

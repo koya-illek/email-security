@@ -1,7 +1,10 @@
 // Shareable report storage: opaque bearer ids, 14-day retention, and a
 // retrieval contract that keeps "absent" distinct from "storage failed".
 const REPORT_RETENTION_DAYS = 14;
-const REPORT_ID_RE = /^[A-Za-z0-9_-]{16}$/;
+// New ids are 128-bit (32 hex chars). Existing 16-character ids remain
+// retrievable until they expire.
+const REPORT_ID_RE = /^[A-Za-z0-9_-]{16}(?:[A-Za-z0-9_-]{16})?$/;
+const REPORT_ID_BYTES = 16;
 
 class ReportStorageError extends Error {
   constructor(message = 'The report could not be read from storage.') {
@@ -11,11 +14,11 @@ class ReportStorageError extends Error {
   }
 }
 
-// Generate a 16-character unguessable report ID. These ids are bearer
-// credentials, so the full 64 bits are uniformly random: a truncated
-// UUIDv4 leaks its version/variant structure in access logs and dumps.
+// Generate an unguessable report ID. These ids are bearer credentials, so
+// the full 128 bits are uniformly random: a truncated UUIDv4 leaks its
+// version/variant structure in access logs and dumps.
 function generateReportId() {
-  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  const bytes = crypto.getRandomValues(new Uint8Array(REPORT_ID_BYTES));
   return [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
@@ -115,10 +118,28 @@ async function loadReport(env, id) {
   }
 }
 
+async function deleteReport(env, id) {
+  if (!REPORT_ID_RE.test(id)) return false;
+  if (!env?.DB || typeof env.DB.prepare !== 'function') {
+    throw new ReportStorageError('The report could not be removed from storage.');
+  }
+  let row;
+  try {
+    row = await env.DB.prepare(
+      "DELETE FROM reports WHERE id = ? AND expires_at > ? AND type IN ('domain', 'batch') RETURNING id"
+    ).bind(id, new Date().toISOString()).first();
+  } catch {
+    throw new ReportStorageError('The report could not be removed from storage.');
+  }
+  return Boolean(row?.id);
+}
+
 module.exports = {
   REPORT_ID_RE,
+  REPORT_ID_BYTES,
   REPORT_RETENTION_DAYS,
   ReportStorageError,
+  deleteReport,
   generateReportId,
   loadReport,
   reportExpiry,
