@@ -27,6 +27,9 @@ test('email MCP negotiates Streamable HTTP and publishes every backend capabilit
     'get_email_security_report'
   ]);
   assert.ok(listBody.result.tools.every(tool => tool.inputSchema && tool.outputSchema));
+  const domainTool = listBody.result.tools.find(tool => tool.name === 'analyze_email_domain');
+  assert.equal(domainTool.inputSchema.properties.share.type, 'boolean');
+  assert.equal(initialized.headers.get('access-control-allow-headers')?.includes('Authorization'), false);
 });
 
 test('email MCP returns structured tool output', async () => {

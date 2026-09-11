@@ -74,7 +74,7 @@ async function postResponse(path, body, headers = {}) {
     // Allow contract as static routes, and unknown paths stay free of charge.
     const wrongReportMethod = await fetch(base + '/api/reports/aaaaaaaaaaaaaaaa', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{}' });
     assert.equal(wrongReportMethod.status, 405, 'report routes answer 405 for unsupported verbs');
-    assert.equal(wrongReportMethod.headers.get('allow'), 'GET, HEAD', 'Allow lists report retrieval methods');
+    assert.equal(wrongReportMethod.headers.get('allow'), 'GET, HEAD, DELETE', 'Allow lists report retrieval methods');
     const postUnknownApi = await fetch(base + '/api/nope', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` },
@@ -87,7 +87,8 @@ async function postResponse(path, body, headers = {}) {
     const mcpPreflight = await fetch(base + '/mcp/v2', { method: 'OPTIONS' });
     assert.equal(mcpPreflight.status, 204, 'MCP answers its own preflight');
     assert.equal(mcpPreflight.headers.get('access-control-allow-methods'), 'POST, OPTIONS');
-    assert.equal((await fetch(base + '/api/check', { method: 'OPTIONS' })).headers.get('access-control-allow-methods'), 'GET, POST, OPTIONS', 'REST keeps the global preflight');
+    assert.equal((await fetch(base + '/api/check', { method: 'OPTIONS' })).headers.get('access-control-allow-methods'), 'GET, POST, DELETE, OPTIONS', 'REST keeps the global preflight');
+    assert.equal((await fetch(base + '/api/check', { method: 'OPTIONS' })).headers.get('access-control-allow-headers')?.toLowerCase().includes('authorization'), false, 'REST does not advertise unused Authorization');
 
     // MCP end-to-end over HTTP: everything above only proves routing; the
     // JSON-RPC lifecycle, tool dispatch, and error shapes must work against
@@ -193,6 +194,7 @@ async function postResponse(path, body, headers = {}) {
     ['/api/check', null, 400],
     ['/api/header/enrich', { ips: '8.8.8.8' }, 400],
     ['/api/check', { domain: 'bad..example.com' }, 400],
+    ['/api/check', { domain: 'office.lan' }, 400],
     ['/api/batch', { domains: Array.from({ length: 26 }, (_, item) => `host${item}.example.com`) }, 413]
   ].entries()) {
     const response = await postResponse(path, body, { 'CF-Connecting-IP': `203.0.113.${100 + index}` });
@@ -227,11 +229,17 @@ async function postResponse(path, body, headers = {}) {
     `MTA-STS policy fetch must succeed via manual redirect handling; got: ${worstCase.transport.policy?.error || 'no policy object'}`
   );
 
-  // Report lifecycle end-to-end: every response stores its own share row, so
-  // the analysis above must have minted a retrievable bearer link with the
-  // documented retrieval headers.
-  const shareId = worstCase.share?.id;
-  assert.match(shareId || '', /^[A-Za-z0-9_-]{16}$/, 'a completed domain check mints a bearer report id');
+  // Report lifecycle: analysis does not persist unless share is requested.
+  // The gmail.com check above is a cacheable analysis; a follow-up with
+  // share:true must mint a bearer id without re-running the DoH ladder as a
+  // required side effect of sharing.
+  assert.equal(worstCase.share?.available, false, 'domain checks do not persist unless share is requested');
+  assert.equal(worstCase.id || null, null, 'unshared domain checks must not mint a report id');
+  const shared = await post('/api/check', { domain: 'gmail.com', share: true });
+  assert.equal(shared.freshness?.cached, true, 'the share follow-up may reuse the analysis cache');
+  const shareId = shared.share?.id;
+  assert.match(shareId || '', /^[A-Za-z0-9_-]{16}(?:[A-Za-z0-9_-]{16})?$/, 'an opted-in domain check mints a bearer report id');
+  assert.equal(shareId.length, 32, 'new report ids are 128-bit');
   const storedGet = await fetch(base + `/api/reports/${shareId}`);
   assert.equal(storedGet.status, 200);
   assert.equal(storedGet.headers.get('cache-control'), 'private, no-store', 'stored reports are not cacheable');
@@ -241,6 +249,16 @@ async function postResponse(path, body, headers = {}) {
   const exported = await fetch(base + `/api/reports/${shareId}/export`);
   assert.equal(exported.status, 200);
   assert.match(exported.headers.get('content-disposition') || '', /^attachment; filename="email-security-gmail\.com\.json"$/);
+  const mcpReport = await (await mcpCall({
+    jsonrpc: '2.0', id: 9, method: 'tools/call',
+    params: { name: 'get_email_security_report', arguments: { reportId: shareId } }
+  })).json();
+  assert.equal(mcpReport.result.isError, false, 'MCP retrieves an opted-in report');
+  assert.equal(mcpReport.result.structuredContent.domain, 'gmail.com');
+  const revoked = await fetch(base + `/api/reports/${shareId}`, { method: 'DELETE' });
+  assert.equal(revoked.status, 200, 'DELETE revokes a bearer report');
+  assert.equal((await revoked.json()).revoked, true);
+  assert.equal((await fetch(base + `/api/reports/${shareId}`)).status, 404, 'a revoked report is gone');
 
   const current = await post('/api/records/validate', {
     type: 'dmarc', domain: '',
@@ -303,7 +321,7 @@ async function postResponse(path, body, headers = {}) {
   assert.equal(invalidJson.status, 400, `invalid JSON answers 400${workerFaults}`);
   assert.match((await invalidJson.json()).error, /valid JSON/);
   const wrongContentType = await postResponse('/api/check', { domain: 'example.com' }, { 'content-type': 'text/plain', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` });
-  assert.equal(wrongContentType.status, 200, 'bodies parse by content, not by content-type label');
+  assert.equal(wrongContentType.status, 415, 'REST analysis POSTs require application/json');
 
   // Standard-limiter warmup: /api/header/analyze is the cheapest POST route
   // (stateless, no DNS), and record validation moved to the expensive class.

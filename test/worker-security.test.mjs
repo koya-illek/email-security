@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+// This file is not a Worker HTTP-boundary suite. Request validation, CORS,
+// rate limits, and content-type contracts live in test/conformance.mjs;
+// redirect policy lives in test/redirects.test.cjs. The case below is a
+// policy-tag helper for SPF void-lookup accounting.
 
 test("an include target publishing unrelated TXT is a no-match, never a void lookup", async () => {
   // §5.2: an include whose target has no SPF record simply does not match.

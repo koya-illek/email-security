@@ -2,6 +2,11 @@
 // Post-deployment gate for the exact checks required by the August 2026 review.
 // This command sends two validation requests, so do not use it for a read-only
 // production review.
+//
+// Browser workflows (`npm run test:browser`) are a separate release-time UI
+// check and are not invoked here: this probe hits the live host and must stay
+// small. Run Playwright locally (or via the documented GitHub Action notes)
+// before shipping UI changes.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';

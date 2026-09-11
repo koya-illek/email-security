@@ -148,6 +148,7 @@ await Promise.all([
     assert.ok(spec.paths['/api/health'].head, 'health must document HEAD');
     const reportPath = spec.paths['/api/reports/{reportId}'];
     assert.ok(reportPath.get && reportPath.head, 'report retrieval must document GET and HEAD');
+    assert.ok(reportPath.delete, 'report retrieval must document DELETE revoke');
     assert.ok(reportPath.get.responses['404'] && reportPath.get.responses['503'],
       'report retrieval must document absence (404) and storage failure (503)');
     assert.ok(reportPath.get.responses['405'], 'report retrieval must document the wrong-verb 405');

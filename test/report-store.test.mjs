@@ -8,6 +8,7 @@ const {
   ReportStorageError,
   generateReportId,
   loadReport,
+  deleteReport,
   reportExpiry,
   reportShareMetadata,
   storeReport
@@ -110,14 +111,17 @@ test('share metadata and expiry describe an honest bearer link', () => {
   assert.equal(unavailable.available, false);
 });
 
-test('generated report ids always satisfy the retrieval pattern', () => {
+test('generated report ids are 128-bit and satisfy the retrieval pattern', () => {
   const ids = new Set();
   for (let i = 0; i < 20; i++) {
     const id = generateReportId();
+    assert.equal(id.length, 32);
     assert.match(id, REPORT_ID_RE);
     ids.add(id);
   }
   assert.equal(ids.size, 20);
+  assert.match('1234567890abcdef', REPORT_ID_RE, 'legacy 16-character ids remain retrievable');
+  assert.equal(REPORT_ID_RE.test('short'), false);
 });
 
 test('report ids carry no UUID structure so they cannot be fingerprinted as truncated UUIDs', () => {
@@ -129,6 +133,22 @@ test('report ids carry no UUID structure so they cannot be fingerprinted as trun
   assert.ok(new Set(ids.map(id => id[12])).size > 1, 'variant-nibble position must vary');
 });
 
+test('deleteReport removes an unexpired domain or batch row and refuses absence', async () => {
+  const working = { DB: stubDb({ selectRow: { id: '1234567890abcdef' } }) };
+  assert.equal(await deleteReport(working, '1234567890abcdef'), true);
+  assert.match(working.DB.statements[0].sql, /DELETE FROM reports/);
+  assert.match(working.DB.statements[0].sql, /type IN \('domain', 'batch'\)/);
+
+  assert.equal(await deleteReport({ DB: stubDb({ selectRow: null }) }, '1234567890abcdef'), false);
+  assert.equal(await deleteReport({ DB: stubDb() }, 'short'), false);
+});
+
+test('deleteReport treats a missing database binding as storage trouble, not absence', async () => {
+  await assert.rejects(() => deleteReport({}, '1234567890abcdef'), ReportStorageError);
+  const env = { DB: stubDb({ selectThrows: true }) };
+  await assert.rejects(() => deleteReport(env, '1234567890abcdef'), ReportStorageError);
+});
+
 test('report routes keep absence and storage failure distinct end to end', () => {
   // The route must map the controlled storage error to 503 while reserving
   // 404 for genuine absence, and must not blame rate limiting for read outages.
@@ -136,4 +156,6 @@ test('report routes keep absence and storage failure distinct end to end', () =>
   assert.match(worker, /return requestErrorResponse\(err, corsHeaders, 503\)/);
   assert.match(worker, /error: 'Report not found or expired'/);
   assert.match(worker, /error: 'Report retrieval is temporarily unavailable\. Try again shortly\.'/);
+  assert.match(worker, /mcpDailyQuotaLimit/);
+  assert.match(worker, /STANDARD_RATE_LIMITER_BINDING/);
 });

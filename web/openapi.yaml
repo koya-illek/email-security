@@ -7,10 +7,12 @@ info:
     No authentication is currently required. Domain checks perform live public DNS
     and HTTPS observations; header analysis interprets receiver-reported evidence
     but does not cryptographically verify DKIM signatures. Scores are guidance,
-    not proof of deliverability or safety. Report links are bearer links retained
-    for 14 days and returned with private no-store caching. Domain analysis caps
-    outbound work at 45 subrequests per invocation and exposes provider and
-    uncertainty state in the response.
+    not proof of deliverability or safety. Domain and batch reports are stored only
+    when the caller sets share: true (or the UI checkbox). Stored bearer links are
+    retained for 14 days, served with private no-store caching, and can be revoked
+    with DELETE /api/reports/{id}. Domain analysis caps outbound work at 45
+    subrequests per invocation and exposes provider and uncertainty state in the
+    response.
 servers:
   - url: https://email.illek.ie
 x-ai-usage:
@@ -76,14 +78,16 @@ paths:
         '200': { description: Completed domain analysis, content: { application/json: { schema: { $ref: '#/components/schemas/DomainReport' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
   /api/v2/domain-check:
     post:
       operationId: analyzeEmailDomain
       summary: Analyze public email-security posture for a domain
-      description: Checks SPF, common DKIM selector evidence, DMARC, MX, CAA, reverse DNS, MTA-STS, and TLS-RPT.
+      description: Checks SPF, common DKIM selector evidence, DMARC, MX, CAA, reverse DNS, MTA-STS, and TLS-RPT. Set share to true to persist a 14-day bearer report.
       requestBody:
         required: true
         content:
@@ -98,9 +102,11 @@ paths:
               schema: { $ref: '#/components/schemas/DomainReport' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
   /api/v2/header-analysis:
     post:
       operationId: analyzeEmailHeaders
@@ -121,9 +127,11 @@ paths:
               schema: { $ref: '#/components/schemas/HeaderReport' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
   /api/header/analyze:
     post:
       operationId: analyzeEmailHeadersLegacy
@@ -142,9 +150,11 @@ paths:
               schema: { $ref: '#/components/schemas/HeaderReport' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
   /api/batch:
     post:
       operationId: analyzeEmailDomainsBatch
@@ -153,15 +163,17 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, required: [domains], properties: { domains: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, items: { type: string, maxLength: 253 } } } }
+            schema: { type: object, additionalProperties: false, required: [domains], properties: { domains: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, items: { type: string, maxLength: 253 } }, share: { type: boolean, description: When true, persist a 14-day bearer batch report. Default false. } } }
             example: { domains: [example.com, example.org] }
       responses:
         '200': { description: Batch comparison report, content: { application/json: { schema: { $ref: '#/components/schemas/BatchReport' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
   /api/spf/inspect:
     post:
       operationId: inspectSpf
@@ -173,9 +185,11 @@ paths:
         '200': { description: SPF inspection, content: { application/json: { schema: { type: object, required: [domain, spf, flatten, request_budget], properties: { domain: { type: string }, spf: { type: object, additionalProperties: true }, flatten: { type: object, additionalProperties: true }, request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
   /api/spf/evaluate:
     post:
       operationId: evaluateSpf
@@ -187,9 +201,11 @@ paths:
         '200': { description: RFC SPF evaluation result, content: { application/json: { schema: { type: object, required: [status, lookups, request_budget], additionalProperties: true, properties: { request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
   /api/records/validate:
     post:
       operationId: validateEmailRecord
@@ -201,9 +217,11 @@ paths:
         '200': { description: Validation errors, warnings, parsed evidence, and the request budget, content: { application/json: { schema: { $ref: '#/components/schemas/ValidationReport' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
   /api/v2/record-build:
     post:
       operationId: buildEmailRecord
@@ -219,9 +237,11 @@ paths:
         '200': { description: Built and validated record, content: { application/json: { schema: { $ref: '#/components/schemas/RecordBuildReport' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
   /api/header/enrich:
     post:
       operationId: enrichEmailHops
@@ -233,16 +253,18 @@ paths:
         '200': { description: Bounded PTR and registration enrichment, content: { application/json: { schema: { type: object, required: [enriched, limit, request_budget], properties: { enriched: { type: array, items: { type: object, additionalProperties: true } }, limit: { type: integer, enum: [10] }, request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
   /api/reports/{reportId}:
     head:
       operationId: probeEmailSecurityReport
       summary: Probe an unexpired report without a response body
-      description: Shares the GET contract, including quota accounting; the runtime strips the body.
+      description: Shares the GET contract, including per-minute and daily quota accounting; the runtime strips the body.
       parameters:
-        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}$' } }
+        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}(?:[A-Za-z0-9_-]{16})?$' } }
       responses:
         '200': { description: The report exists and is unexpired }
         '404': { description: Report not found or expired }
@@ -252,7 +274,7 @@ paths:
       operationId: getEmailSecurityReport
       summary: Retrieve an unexpired domain or batch report
       parameters:
-        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}$' } }
+        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}(?:[A-Za-z0-9_-]{16})?$' } }
       responses:
         '200':
           description: Stored domain or batch report. The response is a bearer-link resource and is private and not cacheable.
@@ -264,12 +286,26 @@ paths:
         '405': { $ref: '#/components/responses/MethodNotAllowed' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { description: Report storage or usage accounting is temporarily unavailable; the report is not known to be gone }
+    delete:
+      operationId: revokeEmailSecurityReport
+      summary: Revoke a stored bearer report
+      description: Deletes the unexpired domain or batch row identified by the bearer id. No login is required; possession of the id is the credential. Consumes the same per-minute and daily report quotas as GET.
+      parameters:
+        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}(?:[A-Za-z0-9_-]{16})?$' } }
+      responses:
+        '200':
+          description: The report was revoked
+          content: { application/json: { schema: { type: object, required: [revoked, id], properties: { revoked: { type: boolean }, id: { type: string } } } } }
+        '404': { description: Report not found or expired }
+        '405': { $ref: '#/components/responses/MethodNotAllowed' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { description: Report storage or usage accounting is temporarily unavailable; the report is not known to be gone }
   /api/reports/{reportId}/export:
     get:
       operationId: exportEmailSecurityReport
       summary: Download an unexpired report as formatted JSON
       parameters:
-        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}$' } }
+        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}(?:[A-Za-z0-9_-]{16})?$' } }
       responses:
         '200':
           description: JSON report attachment. The response is private and not cacheable.
@@ -284,9 +320,9 @@ paths:
     head:
       operationId: probeEmailSecurityReportExport
       summary: Probe export availability without a response body
-      description: Shares the GET contract, including quota accounting; the runtime strips the body.
+      description: Shares the GET contract, including per-minute and daily quota accounting; the runtime strips the body.
       parameters:
-        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}$' } }
+        - { name: reportId, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{16}(?:[A-Za-z0-9_-]{16})?$' } }
       responses:
         '200': { description: Export would succeed }
         '404': { description: Report not found or expired }
@@ -317,6 +353,7 @@ paths:
         '413': { description: MCP request exceeds the 280 KiB limit, answered as a JSON-RPC -32600 error }
         '415': { description: Content-Type must be application/json }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
   /mcp:
     post:
       operationId: invokeEmailSecurityMcpUnversioned
@@ -337,6 +374,7 @@ paths:
         '413': { description: MCP request exceeds the 280 KiB limit, answered as a JSON-RPC -32600 error }
         '415': { description: Content-Type must be application/json }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/QuotaAccountingUnavailable' }
 components:
   headers:
     RetryAfter:
@@ -354,7 +392,8 @@ components:
       additionalProperties: false
       required: [domain]
       properties:
-        domain: { type: string, maxLength: 253, example: example.com, description: Bare public DNS domain without scheme, path, or email local part. }
+        domain: { type: string, maxLength: 253, example: example.com, description: Bare public DNS domain without scheme, path, or email local part. Special-use suffixes such as .local, .localhost, .internal, and .lan are refused. }
+        share: { type: boolean, description: When true, persist a 14-day bearer report. Default false: the analysis is returned without inserting a D1 row. }
     HeaderRequest:
       type: object
       additionalProperties: false
@@ -371,7 +410,7 @@ components:
       required: [ip]
       anyOf: [{ required: [domain] }, { required: [sender] }]
       properties:
-        ip: { type: string, description: SMTP client IPv4 or IPv6 address. }
+        ip: { type: string, description: SMTP client IPv4 or IPv6 address. Private, loopback, and documentation ranges are accepted so lab fixtures can be evaluated; this is not a network probe. Hop enrichment still requires public addresses. }
         sender: { type: string, maxLength: 320 }
         helo: { type: string, maxLength: 253 }
         domain: { type: string, maxLength: 253 }
@@ -547,7 +586,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     RateLimited:
-      description: 'Request limit reached; retry after the interval in the Retry-After header. Caps: 60 requests per minute for header analysis (standard class) and 10 per minute for every other POST analysis endpoint plus all MCP tool calls (expensive class), 500 analysis requests per UTC day, and 120 report retrievals per UTC day.'
+      description: 'Request limit reached; retry after the interval in the Retry-After header. Caps: 60 requests per minute for header analysis and REST report reads (standard class), 10 per minute for other REST analysis POSTs (expensive class), 6 per minute for MCP HTTP requests, 500 REST analysis POSTs per UTC day, 80 MCP analysis tool calls per UTC day, 120 REST report retrievals per UTC day, and 40 MCP report retrievals per UTC day. MCP get_email_security_report consumes the MCP report quota, not the analysis quota. When D1 daily accounting fails, analysis POSTs and report operations fail closed with 503.'
       headers:
         Retry-After: { $ref: '#/components/headers/RetryAfter' }
       content:
@@ -555,6 +594,16 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
     BodyTooLarge:
       description: 'The request body exceeds the endpoint limit: 16 KiB of JSON for domain, SPF, builder, and enrichment endpoints; 256 KiB for header analysis; 280 KiB for MCP messages.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnsupportedMediaType:
+      description: Content-Type must be application/json. Simple CORS requests that send text/plain are refused before analysis quota is spent.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    QuotaAccountingUnavailable:
+      description: Daily quota accounting in D1 is unavailable. Analysis POSTs and report operations fail closed until it recovers rather than running without the durable cap.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
