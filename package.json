@@ -28,13 +28,14 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "ipaddr.js": "^2.4.0",
+    "ipaddr.js": "^2.5.0",
     "mailauth": "^4.13.3",
-    "tldts": "^7.4.9"
+    "tldts": "^7.4.12"
   },
   "overrides": {
-    "nodemailer": "9.0.1",
-    "undici": "7.29.0"
+    "nodemailer": "^9.1.1",
+    "undici": "7.29.0",
+    "joi": "^18.2.9"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
