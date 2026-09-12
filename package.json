@@ -30,7 +30,7 @@
   "dependencies": {
     "ipaddr.js": "^2.5.0",
     "mailauth": "^4.13.3",
-    "tldts": "^7.4.9"
+    "tldts": "^7.4.12"
   },
   "overrides": {
     "nodemailer": "^9.1.1",
