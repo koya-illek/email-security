@@ -1,17 +1,24 @@
 # Email Security
 
-An Illek project.
+Check a domain's email authentication and policy records. Inspect SPF, DKIM,
+DMARC and mail transport evidence, or review message headers and proposed DNS records.
 
-<p align="center">
-  <img src="web/social-card.svg" alt="Email Security: Understand your email security posture. SPF, DKIM, DMARC, transport and message evidence." width="720">
-</p>
+[Open Email Security](https://email.illek.ie) · [More Illek tools](https://tools.illek.ie)
 
-Serverless email security analyzer for SPF, DKIM, RFC 9989 DMARC, MX,
-MTA-STS, TLS-RPT, CAA, and inbound MX reverse-DNS observations. The live
-service is [email.illek.ie](https://email.illek.ie).
+![Email Security interface showing domain checks, SPF tools and header analysis](docs/assets/product-screenshot.png)
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete component, data-flow,
-storage, security-boundary, deployment, and third-party service design.
+*Live interface captured on 12 September 2026.*
+
+## Try it
+
+Enter your domain and select **Check security** to review its published records
+and suggested next steps. Use **Record Builder** to validate a proposed SPF or
+DMARC record before changing DNS, or **Header Analyzer** to interpret message headers.
+
+Shareable report storage is opt-in. Results describe observed evidence and do
+not prove deliverability or cryptographically verify pasted message headers.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the component and data-flow documentation.
 
 ## Contents
 
@@ -269,6 +276,12 @@ wrangler dev
 `npm test` is the CI gate. `npm run test:browser` (Playwright) is a release-time UI check; run it before shipping frontend changes. `scripts/verify-release.mjs` remains the post-deploy production probe (health, HTML/contract audit, two DMARC validations) and does not launch Playwright against production.
 
 Opens at `http://localhost:8787`
+
+## Feedback and contributions
+
+Found a problem? [Report a bug](https://github.com/koya-illek/email-security/issues/new?template=bug_report.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for fixes and feature proposals, or
+[SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## License
 
