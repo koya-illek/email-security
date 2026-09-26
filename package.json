@@ -41,6 +41,6 @@
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.63.0",
     "js-yaml": "^5.4.2",
-    "wrangler": "^4.132.0"
+    "wrangler": "^4.136.3"
   }
 }
