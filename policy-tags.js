@@ -215,6 +215,37 @@ function dmarcReportingState(tags) {
   return { published: Boolean(raw), destinations: parseMailtoDestinations(raw) };
 }
 
+// mailauth 7's default SPF mode still returns a verdict when strict RFC 7208
+// would permerror or skip a term. The codes are the library's own names.
+const SPF_EVALUATOR_WARNING_TEXT = {
+  'syntax-error': 'Strict RFC 7208 checking would reject this record. The lenient evaluator still returned a result.',
+  'void-lookup-limit': 'Strict RFC 7208 void-lookup counting would return permerror. The lenient evaluator continued.',
+  'non-ascii-local-part': 'A non-ASCII local-part was used in an SPF macro. Strict checking would not let that term match.'
+};
+
+function spfEvaluatorWarningText(code) {
+  if (Object.prototype.hasOwnProperty.call(SPF_EVALUATOR_WARNING_TEXT, code)) return SPF_EVALUATOR_WARNING_TEXT[code];
+  return /^[a-z0-9-]{1,40}$/.test(String(code || '')) ? `SPF evaluator note: ${code}` : null;
+}
+
+// Fields /api/spf/evaluate and the evaluate_spf tool return from mailauth.
+// DMARC result fields (pct, policy, alignment, organizational domain) are not
+// part of this object and are dropped if a future library build adds them.
+const SPF_EVALUATION_FIELDS = ['domain', 'client-ip', 'helo', 'envelope-from', 'status', 'header', 'info', 'rr', 'lookups', 'explanation', 'warnings'];
+
+function publicSpfEvaluation(result) {
+  const source = result && typeof result === 'object' ? result : {};
+  const evaluation = {};
+  for (const key of SPF_EVALUATION_FIELDS) {
+    if (key === 'warnings') continue;
+    if (source[key] !== undefined) evaluation[key] = source[key];
+  }
+  if (Array.isArray(source.warnings) && source.warnings.length) {
+    evaluation.warnings = source.warnings.filter(code => typeof code === 'string');
+  }
+  return evaluation;
+}
+
 module.exports = {
   DMARC_POLICY_VALUES,
   isDmarcVersionRecord,
@@ -232,5 +263,7 @@ module.exports = {
   isValidIpv4Cidr,
   spfDualCidrError,
   parseMailtoDestinations,
-  dmarcReportingState
+  dmarcReportingState,
+  spfEvaluatorWarningText,
+  publicSpfEvaluation
 };

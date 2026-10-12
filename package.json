@@ -9,7 +9,7 @@
     "check": "wrangler deploy --dry-run",
     "audit:html": "node scripts/audit-html.mjs",
     "verify:release": "node scripts/verify-release.mjs",
-    "test:spf": "node --test test/rfc7208.cjs",
+    "test:spf": "node --test test/rfc7208.cjs test/mailauth-spf.test.cjs",
     "test:headers": "node --test test/header-analysis.cjs",
     "test:browser": "playwright test",
     "test:integration": "wrangler d1 execute email-security-reports --local --file=schema.sql && node test/conformance.mjs",
