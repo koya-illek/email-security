@@ -1,6 +1,8 @@
 // Email Security Checker — Cloudflare Workers
 // Optimized for 10ms CPU limit with parallel DoH lookups
 
+// SPF evaluation only. mailauth's DMARC and BIMI results are not used:
+// domain DMARC is discovered in this file, and header alignment uses tldts.
 const { spf: evaluateSpf } = require('mailauth/lib/spf');
 const ipaddr = require('ipaddr.js');
 const { analyzeEmailHeaders } = require('./header-analyzer');
@@ -44,7 +46,9 @@ const {
   isValidIpv4Cidr,
   spfDualCidrError,
   parseMailtoDestinations,
-  dmarcReportingState
+  dmarcReportingState,
+  spfEvaluatorWarningText,
+  publicSpfEvaluation
 } = require('./policy-tags');
 const {
   isValidMtaStsMxPattern,
@@ -605,7 +609,7 @@ async function handleRequest(request, env) {
           mta: 'email-security-checker', resolver: args.record ? makeSpfRecordResolver(domain, args.record, requestBudget) : (name, type) => spfDnsResolver(name, type, requestBudget),
           maxResolveCount: 10, maxVoidCount: 2,
         });
-        return { ...result, request_budget: requestBudget.snapshot() };
+        return { ...publicSpfEvaluation(result), request_budget: requestBudget.snapshot() };
       }
       if (tool === 'validate_email_record') {
         const domain = normalizeDomain(args.domain);
@@ -733,7 +737,7 @@ async function handleRequest(request, env) {
         maxResolveCount: 10,
         maxVoidCount: 2
       });
-      return jsonResponse({ ...result, request_budget: requestBudget.snapshot() }, 200, corsHeaders);
+      return jsonResponse({ ...publicSpfEvaluation(result), request_budget: requestBudget.snapshot() }, 200, corsHeaders);
     } catch (err) {
       const limited = bodyLimitResponse(err, corsHeaders);
       if (limited) return limited;
@@ -1234,6 +1238,10 @@ async function validateSpfRecord(domain, value, budget = null) {
       } else if (evaluator.status?.result === 'temperror') {
         warnings.push(`RFC 7208 evaluation was temporarily inconclusive: ${evaluator.status.comment || 'DNS error'}`);
       }
+      for (const code of evaluator.warnings || []) {
+        const note = spfEvaluatorWarningText(code);
+        if (note) warnings.push(note);
+      }
     } catch (err) {
       warnings.push(`RFC 7208 evaluator could not complete: ${err.message}`);
     }
@@ -1250,7 +1258,8 @@ async function validateSpfRecord(domain, value, budget = null) {
     characterCount: record.length,
     evaluator: evaluator ? {
       result: evaluator.status?.result,
-      lookups: evaluator.lookups
+      lookups: evaluator.lookups,
+      ...(Array.isArray(evaluator.warnings) && evaluator.warnings.length ? { warnings: evaluator.warnings } : {})
     } : null
   };
 }

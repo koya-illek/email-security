@@ -198,7 +198,7 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/SpfEvaluationRequest' }, example: { ip: 192.0.2.1, sender: postmaster@example.com, helo: example.com } } }
       responses:
-        '200': { description: RFC SPF evaluation result, content: { application/json: { schema: { type: object, required: [status, lookups, request_budget], additionalProperties: true, properties: { request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
+        '200': { description: RFC SPF evaluation result. mailauth 7 may add explanation on fail and warnings when the lenient evaluator accepts a record strict RFC 7208 would reject. Received-SPF includes envelope-from and helo. An unparseable client IP is temperror. DMARC fields such as pct are not part of this response., content: { application/json: { schema: { type: object, required: [status, lookups, request_budget], additionalProperties: false, properties: { domain: { type: string }, client-ip: { type: string }, helo: { type: string }, envelope-from: { type: string }, status: { type: object, additionalProperties: true }, header: { type: string }, info: { type: string }, rr: { type: string }, lookups: { type: object, additionalProperties: true }, explanation: { type: string }, warnings: { type: array, items: { type: string } }, request_budget: { $ref: '#/components/schemas/RequestBudget' } } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '413': { $ref: '#/components/responses/BodyTooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedMediaType' }

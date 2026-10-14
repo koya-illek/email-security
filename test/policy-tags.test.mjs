@@ -17,7 +17,9 @@ const {
   isValidIpv4Cidr,
   spfDualCidrError,
   parseMailtoDestinations,
-  dmarcReportingState
+  dmarcReportingState,
+  spfEvaluatorWarningText,
+  publicSpfEvaluation
 } = require("../policy-tags.js");
 const { estimateDkimKeyBits } = require("../scoring.js");
 
@@ -33,6 +35,14 @@ test("non-inherited records and absent or invalid sp= fall back to p=", () => {
   assert.equal(effectiveDmarcPolicy({ p: "reject" }, true), "reject");
   assert.equal(effectiveDmarcPolicy({ p: "reject", sp: "sometimes" }, true), "reject");
   assert.equal(effectiveDmarcPolicy({}, true), null);
+});
+
+test("historic pct= and t= do not change the policy this checker reports", () => {
+  // Domain posture does not read mailauth's DMARC result. pct is ignored, and
+  // t=y is reported as its own check rather than lowering p= here.
+  assert.equal(effectiveDmarcPolicy({ p: "reject", pct: "50" }, false), "reject");
+  assert.equal(effectiveDmarcPolicy({ p: "reject", t: "y" }, false), "reject");
+  assert.equal(effectiveDmarcPolicy({ p: "reject", np: "none" }, false), "reject");
 });
 
 test("the policy value whitelist stays closed", () => {
@@ -161,6 +171,38 @@ test("parseMailtoDestinations keeps case-insensitive schemes and strips size lim
   ]);
   // Non-mailto URIs are not deliverable destinations.
   assert.deepEqual(parseMailtoDestinations("https://reports.example/dmarc"), []);
+});
+
+test("SPF evaluator warnings from mailauth 7 stay human-readable and unknown codes stay bounded", () => {
+  assert.match(spfEvaluatorWarningText("syntax-error"), /Strict RFC 7208/);
+  assert.match(spfEvaluatorWarningText("void-lookup-limit"), /permerror/);
+  assert.match(spfEvaluatorWarningText("non-ascii-local-part"), /non-ASCII/);
+  assert.equal(spfEvaluatorWarningText("future-code"), "SPF evaluator note: future-code");
+  assert.equal(spfEvaluatorWarningText("not a code"), null);
+  assert.equal(spfEvaluatorWarningText(""), null);
+});
+
+test("the public SPF evaluation drops DMARC result fields mailauth 7 removed or never returned here", () => {
+  const evaluation = publicSpfEvaluation({
+    domain: "example.com",
+    "client-ip": "192.0.2.1",
+    status: { result: "fail" },
+    lookups: { count: 0 },
+    explanation: "no",
+    warnings: ["syntax-error"],
+    pct: 50,
+    policy: "reject",
+    alignment: { spf: { result: "example.com" } },
+    testMode: true
+  });
+  assert.equal(evaluation.explanation, "no");
+  assert.deepEqual(evaluation.warnings, ["syntax-error"]);
+  assert.equal(evaluation.pct, undefined);
+  assert.equal(evaluation.policy, undefined);
+  assert.equal(evaluation.alignment, undefined);
+  assert.equal(evaluation.testMode, undefined);
+  assert.deepEqual(publicSpfEvaluation({ warnings: [] }).warnings, undefined);
+  assert.deepEqual(publicSpfEvaluation(null), {});
 });
 
 test("dmarcReportingState separates an absent rua= from a published-but-undeliverable one", () => {

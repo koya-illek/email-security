@@ -171,7 +171,25 @@ async function postResponse(path, body, headers = {}) {
       helo: 'helo.fixture.example', record, ip
     });
     assert.equal(data.status.result, expected, name);
+    assert.equal(data.pct, undefined, `${name} must not carry a DMARC pct field`);
+    assert.match(data.header, /envelope-from=/, `${name} Received-SPF names the checked identity`);
   }
+
+  const lax = await post('/api/spf/evaluate', {
+    domain: 'fixture.example', sender: 'sender@fixture.example',
+    helo: 'helo.fixture.example', record: ' v=spf1 ip4:192.0.2.1 -all', ip: '192.0.2.1'
+  });
+  assert.equal(lax.status.result, 'pass', 'leading whitespace still evaluates in the lenient mode');
+  assert.deepEqual(lax.warnings, ['syntax-error']);
+  assert.equal(lax.explanation, undefined);
+
+  const badIp = await post('/api/spf/evaluate', {
+    domain: 'fixture.example', sender: 'sender@fixture.example',
+    helo: 'helo.fixture.example', record: 'v=spf1 -all', ip: 'not-an-ip'
+  });
+  assert.equal(badIp.status.result, 'temperror', 'an unparseable client IP is temperror');
+  assert.match(badIp.status.comment, /invalid client IP address/);
+  assert.equal(badIp.warnings, undefined);
 
   for (const record of [
     'v=spf1 ip4:192.0.2.1/24/7 -all',
