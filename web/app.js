@@ -367,6 +367,7 @@
   const domainGeneration = createGeneration();
   let domainCheckInFlight = false;
   let domainCheckPromise = null;
+  let domainController=null;
   let refreshTimer;
 
   $("#refresh-domain").addEventListener("click", () => {
@@ -378,7 +379,12 @@
 
   // Editing the field orphans the in-flight answer: when the response lands,
   // the generation mismatch stops it from rendering under a different domain.
-  domainInput?.addEventListener("input", () => domainGeneration.next());
+  function abandonDomainCheck(){
+    domainGeneration.next();domainController?.abort();domainController=null;domainCheckInFlight=false;
+    domainLoading.classList.add("hidden");checkButton.disabled=false;
+  }
+  domainInput?.addEventListener("input", abandonDomainCheck);
+  $("#dkim-selector")?.addEventListener("input",abandonDomainCheck);
 
   checkForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -389,6 +395,8 @@
     // activations serial and exposes the running request so triggers can
     // queue behind it instead of being dropped.
     domainCheckInFlight = true;
+    const controller=new AbortController();domainController=controller;
+    const timeout=setTimeout(()=>controller.abort(),35000);
     const generation = domainGeneration.current();
     domainLoading.classList.remove("hidden");
     domainError.classList.add("hidden");
@@ -400,7 +408,8 @@
         const r = await fetch(`${API_BASE}/api/check`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domain, share: Boolean($("#domain-share")?.checked) }),
+          signal:controller.signal,
+          body: JSON.stringify({ domain, selector:$("#dkim-selector")?.value.trim()||undefined, share: Boolean($("#domain-share")?.checked) }),
         });
         const d = await parseApiResponse(r, "domain check");
         if (generation !== domainGeneration.current()) return;
@@ -408,9 +417,12 @@
         else showDomainResults(d);
       } catch (err) {
         if (generation === domainGeneration.current()) {
-          showDomainError(err.message || "Failed to analyze domain");
+          showDomainError(err.name==="AbortError"?"Domain check timed out. Please retry.":err.message || "Failed to analyze domain");
         }
       } finally {
+        clearTimeout(timeout);
+        if(domainController!==controller)return;
+        domainController=null;
         domainCheckInFlight = false;
         domainLoading.classList.add("hidden");
         checkButton.disabled = false;
@@ -421,7 +433,7 @@
   });
 
   $("#new-check")?.addEventListener("click", () => {
-    domainGeneration.next();
+    abandonDomainCheck();
     domainReport.classList.add("hidden");
     domainInput.focus();
   });
@@ -1424,7 +1436,8 @@
   function renderHeaderAnalysis(d) {
     const summary = d.summary;
     let html = `<div class="trust-banner ${safeStatusClass(summary.status)}">
-      <strong>${esc(summary.verdict)}</strong>
+      <strong>${summary.status==="fail"?esc(summary.verdict)+" · ":""}Unverified pasted claims${Array.isArray(d.hops)&&!d.hops.length?" · No Received chain":""}</strong>
+      <span>${esc(summary.verdict)}</span>
       <span>${esc(summary.confidence)}${summary.authservId ? " · Receiver ID: " + esc(summary.authservId) : ""}. Authentication outcomes are reported by the pasted headers, not independently re-run.</span>
     </div>`;
 

@@ -79,6 +79,7 @@
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4-4 4 4-4 4"/></svg>
           </button>
         </div>
+        <label for="dkim-selector">Known DKIM selector (optional)</label><input id="dkim-selector" name="selector" type="text" maxlength="253" pattern="[A-Za-z0-9_-]{1,63}(\.[A-Za-z0-9_-]{1,63})*" placeholder="e.g. selector1" autocomplete="off" spellcheck="false">
         <div class="form-meta">
           <span>SPF, DKIM, DMARC, MX, transport</span>
           <span>No login required</span>
@@ -379,7 +380,7 @@
           <textarea class="header-input" id="header-input" placeholder="Paste the original headers from your mailbox provider…" autocapitalize="none" autocorrect="off" spellcheck="false" aria-describedby="header-privacy"></textarea>
           <div class="privacy-note" id="header-privacy">
             <strong>Headers are processed for this request and aren’t stored.</strong>
-            <span>Optional hop lookups send up to 10 public IP addresses to DNS resolvers. Domain and batch reports are stored separately for 14 days.</span>
+            <span>Optional hop lookups send up to 10 public IP addresses to DNS resolvers. Domain and batch reports are stored for up to 14 days only if you enable a shareable link.</span>
           </div>
           <div class="header-actions">
             <button type="button" class="primary-button" id="analyze-headers-btn">Analyze Headers</button>

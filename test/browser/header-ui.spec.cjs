@@ -91,7 +91,8 @@ test('puts a multi-domain From warning ahead of reported authentication passes',
   await page.getByRole('button', { name: 'Analyze Headers' }).click();
 
   await expect(page.locator('.trust-banner')).toHaveClass(/fail/);
-  await expect(page.locator('.trust-banner strong')).toHaveText('Suspicious header structure found');
+  await expect(page.locator('.trust-banner strong')).toContainText('Suspicious header structure found');
+  await expect(page.locator('.trust-banner strong')).toContainText('Unverified pasted claims');
   await expect(page.locator('#header-results')).toContainText('DMARC validation is not normally possible');
 });
 
@@ -1129,4 +1130,20 @@ test('a validation outage never labels a good record invalid', async ({ page }) 
   const copy = page.locator('#spf-builder-output .copy-btn');
   await expect(copy).toBeDisabled();
   await expect(copy).toHaveText('Validation unavailable');
+});
+
+test('known DKIM selector is submitted, and editing a domain abandons its old answer',async({page})=>{
+  let firstBody=null;let release;const held=new Promise(resolve=>release=resolve);
+  await page.route('**/api/check',async route=>{
+    const body=route.request().postDataJSON();
+    if(body.domain==='old.example'){firstBody=body;await held;}
+    await route.fulfill({json:{...domainReport('v=spf1 -all'),domain:body.domain}}).catch(()=>{});
+  });
+  await page.goto('/');await page.locator('#domain-input').fill('old.example');
+  await page.getByLabel('Known DKIM selector (optional)').fill('rotation2026');
+  await page.locator('#check-button').click();await expect.poll(()=>firstBody).not.toBeNull();
+  expect(firstBody.selector).toBe('rotation2026');
+  await page.locator('#domain-input').fill('new.example');await expect(page.locator('#check-button')).toBeEnabled();
+  await page.locator('#check-button').click();await expect(page.locator('#report-domain')).toHaveText('new.example');
+  release();await page.waitForTimeout(100);await expect(page.locator('#report-domain')).toHaveText('new.example');
 });

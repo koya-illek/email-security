@@ -393,6 +393,7 @@ components:
       required: [domain]
       properties:
         domain: { type: string, maxLength: 253, example: example.com, description: Bare public DNS domain without scheme, path, or email local part. Special-use suffixes such as .local, .localhost, .internal, and .lan are refused. }
+        selector: { type: string, maxLength: 253, description: Optional known DKIM selector queried first within the DNS budget. }
         share: { type: boolean, description: When true, persist a 14-day bearer report. Default false: the analysis is returned without inserting a D1 row. }
     HeaderRequest:
       type: object

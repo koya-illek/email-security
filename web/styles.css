@@ -1231,3 +1231,5 @@ body:has(#panel-domain.active #domain-report:not(.hidden)) #home h1 { display:no
 .supporting-details[open] > summary { margin-bottom:20px; }
 .supporting-details .developer-links { margin-top:20px; }
 @media print { .export-menu, .report-actions, .report-share-note { display:none; } }
+
+@media (max-width:600px) { .tool-nav { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); overflow:visible; } .tool-nav .tool-tab { min-width:0; width:100%; white-space:normal; } }
