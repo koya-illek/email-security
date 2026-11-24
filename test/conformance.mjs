@@ -338,6 +338,10 @@ async function postResponse(path, body, headers = {}) {
   });
   assert.equal(invalidJson.status, 400, `invalid JSON answers 400${workerFaults}`);
   assert.match((await invalidJson.json()).error, /valid JSON/);
+  for(const selector of ['bad/selector','a'.repeat(64),{},'a..b']){
+    const invalidSelector=await postResponse('/api/check',{domain:'example.com',selector},{'CF-Connecting-IP':`203.0.113.${(postSequence++ % 200) + 1}`});
+    assert.equal(invalidSelector.status,400);assert.match((await invalidSelector.json()).error,/Invalid DKIM selector/);
+  }
   const wrongContentType = await postResponse('/api/check', { domain: 'example.com' }, { 'content-type': 'text/plain', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` });
   assert.equal(wrongContentType.status, 415, 'REST analysis POSTs require application/json');
 
