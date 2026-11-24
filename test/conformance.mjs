@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
+import { beginRateLimitWindow, rateLimitWindowAt } from './rate-limit-window.mjs';
 
 // A stale dev server left by a crashed or previous run must never answer for
 // this suite, so bind an ephemeral listener to reserve a free port instead of
@@ -350,6 +351,7 @@ async function postResponse(path, body, headers = {}) {
   const runToken = `${process.pid}-${Date.now()}`;
   const client = `conformance-${runToken}-standard`;
   const standardBody = { headers: 'From: sender@example.com\r\n' };
+  const standardWindow = await beginRateLimitWindow();
   for (let attempt = 0; attempt < 60; attempt++) {
     let response = await postResponse('/api/header/analyze', standardBody, { 'CF-Connecting-IP': client });
     // workerd's simulated limiter binding fails intermittently under load
@@ -366,12 +368,14 @@ async function postResponse(path, body, headers = {}) {
     method: 'OPTIONS', headers: { 'CF-Connecting-IP': client }
   })).status, 200);
   const limited = await postResponse('/api/header/analyze', standardBody, { 'CF-Connecting-IP': client });
+  assert.equal(rateLimitWindowAt(), standardWindow, 'standard burst exceeded its fixed-window timing budget');
   assert.equal(limited.status, 429);
   assert.match(limited.headers.get('retry-after') || '', /^\d+$/);
   assert.equal(limited.headers.get('access-control-allow-origin'), '*');
 
   // Invalid payloads stop before DNS, enrichment, or SPF evaluation while still
   // exercising each expensive route's shared namespace.
+  const expensiveWindow = await beginRateLimitWindow();
   const expensiveClient = `conformance-${runToken}-expensive`;
   for (const [path, body, expectedStatus] of [
     ['/api/check', {}, 400],
@@ -391,6 +395,7 @@ async function postResponse(path, body, headers = {}) {
   const expensiveLimited = await postResponse('/api/spf/evaluate', {
     domain: '', ip: ''
   }, { 'CF-Connecting-IP': expensiveClient });
+  assert.equal(rateLimitWindowAt(), expensiveWindow, 'expensive burst exceeded its fixed-window timing budget');
   assert.equal(expensiveLimited.status, 429);
   assert.match(expensiveLimited.headers.get('retry-after') || '', /^\d+$/);
   assert.equal(expensiveLimited.headers.get('access-control-allow-origin'), '*');
