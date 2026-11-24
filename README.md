@@ -288,3 +288,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for fixes and feature proposals, or
 MIT © Koya Illek. See [LICENSE](LICENSE).
 
 Live service: [email.illek.ie](https://email.illek.ie).
+
+### Manual diagnostic handoff
+
+`/#domain=example.com` prefills the domain form with a DNS hostname only. The
+fragment is consumed locally and replaced by `#domain`; it does not start a
+check, select a DKIM selector, enable sharing, or invoke optional providers.
+URLs, IP literals, and local/internal hostname suffixes are not accepted by
+this handoff. The normal server-side validation still applies on submission.
+
+JSON exports verify stored-report HTTP responses before downloading. Expired reports, proxy errors, connection failures and 35-second timeouts are explained inline without downloading an error body. Leaving the tool, starting a new check, changing the inputs or loading another report abandons pending exports. Reports kept only in the browser still export locally without creating a share link.

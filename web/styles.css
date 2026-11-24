@@ -198,7 +198,7 @@ h1 em { color: var(--accent); font-style: normal; font-weight: 500; }
 
 /* Trace form (main input) */
 .trace-form { max-width: 900px; }
-.trace-form > label {
+.trace-form > label:not(.auth-checkbox) {
   display: block;
   margin-bottom: 10px;
   font: 500 12px/1 var(--mono);
@@ -711,6 +711,7 @@ textarea:focus-visible {
 }
 .field { display: grid; gap: 7px; }
 .field.full { grid-column: 1 / -1; }
+.selector-field { margin-top: 16px; max-width: 26rem; }
 .field label, .field-label {
   font-size: 13px;
   font-weight: 600;
@@ -1233,3 +1234,15 @@ body:has(#panel-domain.active #domain-report:not(.hidden)) #home h1 { display:no
 @media print { .export-menu, .report-actions, .report-share-note { display:none; } }
 
 @media (max-width:600px) { .tool-nav { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); overflow:visible; } .tool-nav .tool-tab { min-width:0; width:100%; white-space:normal; } }
+
+/* Keep consent prose separate from diagnostic field labels. */
+.auth-checkbox { font-family: var(--sans); font-size: 14px; line-height: 1.5; text-transform: none; letter-spacing: normal; }
+.field-error { color: var(--critical); font-size: 14px; line-height: 1.5; margin: 10px 0; }
+.builder-advanced { margin-top: 12px; border-block: 1px solid var(--line); }
+.builder-advanced > summary { padding: 16px 0; cursor: pointer; font-size: 14px; font-weight: 600; }
+.builder-advanced > .form-grid { padding-bottom: 20px; }
+.score-cell .incomplete-assessment { display: block; color: var(--text); font: 600 14px/1.4 var(--sans); }
+.score-cell .cell-note { font: 400 12px/1.5 var(--sans); }
+@media (max-width: 620px) {
+  h1, .report-header h2 { letter-spacing: -.03em; }
+}

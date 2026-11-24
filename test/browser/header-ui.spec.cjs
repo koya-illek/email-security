@@ -458,6 +458,7 @@ test('mechanisms typed without a valid domain spend no validation quota', async 
   });
 
   await page.goto('/#builder');
+  if (!(await page.locator('#spf-custom').isVisible())) await page.locator('#spf-advanced > summary').click();
   await page.locator('#spf-custom').fill('ip4:192.0.2.1');
   await expect(page.locator('#spf-builder-output .copy-btn')).toHaveText('Enter a domain to validate');
   await page.waitForTimeout(700); // outlasts the validation debounce
@@ -514,6 +515,7 @@ test('Build records preserves imported SPF providers and blocks unconfirmed remo
   await expect(proposed).not.toHaveText('v=spf1 -all');
 
   const custom = page.locator('#spf-custom');
+  await page.locator('#spf-advanced > summary').click();
   await custom.fill('include:provider-a.example');
   const copyButton = page.locator('#spf-builder-output .copy-btn');
   await expect(copyButton).toBeDisabled();
@@ -532,6 +534,7 @@ test('empty SPF hard-fail requires confirmed no-sender state', async ({ page }) 
 
   await page.goto('/#builder');
   await page.locator('#builder-domain').fill('example.com');
+  if (!(await page.locator('#spf-custom').isVisible())) await page.locator('#spf-advanced > summary').click();
   await page.locator('#spf-policy').selectOption('-all');
 
   const copyButton = page.locator('#spf-builder-output .copy-btn');
@@ -558,6 +561,7 @@ test('shows qualified mechanism order changes before allowing an SPF copy', asyn
   await openBuilderWithRecord(page, record);
 
   await expect(page.locator('#spf-builder-output .dns-value')).toHaveText(record);
+  if (!(await page.locator('#spf-custom').isVisible())) await page.locator('#spf-advanced > summary').click();
   await page.locator('#spf-custom').fill('+include:provider-b.example ~include:provider-a.example');
 
   await expect(page.locator('#spf-safety-notice')).toContainText('Before (imported)');
@@ -634,11 +638,13 @@ test('resets SPF change confirmation after every subsequent record change', asyn
   await openBuilderWithRecord(page, 'v=spf1 include:provider-a.example ~all');
   const copyButton = page.locator('#spf-builder-output .copy-btn');
 
+  if (!(await page.locator('#spf-custom').isVisible())) await page.locator('#spf-advanced > summary').click();
   await page.locator('#spf-custom').fill('include:provider-b.example');
   await expect(copyButton).toBeDisabled();
   await page.locator('#spf-safety-confirm').check();
   await expect(copyButton).toBeEnabled();
 
+  if (!(await page.locator('#spf-custom').isVisible())) await page.locator('#spf-advanced > summary').click();
   await page.locator('#spf-policy').selectOption('-all');
   await expect(page.locator('#spf-safety-confirm')).not.toBeChecked();
   await expect(copyButton).toBeDisabled();
@@ -1147,3 +1153,179 @@ test('known DKIM selector is submitted, and editing a domain abandons its old an
   await page.locator('#check-button').click();await expect(page.locator('#report-domain')).toHaveText('new.example');
   release();await page.waitForTimeout(100);await expect(page.locator('#report-domain')).toHaveText('new.example');
 });
+
+test('domain handoff prefills without running a check or opting into sharing', async ({ page }) => {
+  const requests = [];
+  await page.route('**/api/**', route => {
+    requests.push(route.request().url());
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  });
+  await page.goto('/#domain=MAIL.Example.com');
+  await expect(page.locator('#domain-input')).toHaveValue('mail.example.com');
+  await expect(page.locator('#domain-handoff-note')).toBeVisible();
+  await expect(page.locator('#domain-share')).not.toBeChecked();
+  await expect(page.locator('#dkim-selector')).toHaveValue('');
+  await expect(page).toHaveURL(/#domain$/);
+  expect(requests.filter(url => /\/api\/(check|reports)/.test(url))).toEqual([]);
+  await page.locator('#domain-input').fill('different.example.com');
+  await expect(page.locator('#domain-handoff-note')).toBeHidden();
+});
+
+test('domain handoff rejects URLs, bearer links, IPs and local hostnames', async ({ page }) => {
+  let checks = 0;
+  await page.route('**/api/**', route => {
+    if (/\/api\/(check|reports)/.test(route.request().url())) checks++;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  });
+  for (const target of ['https://example.com/private?token=synthetic', '127.0.0.1', '[::1]', 'printer.local', 'router.internal', 'localhost', 'example.com/path', 'user@example.com', '<script>alert(1)</script>', 'a'.repeat(254) + '.com']) {
+    await page.goto('/#domain=' + encodeURIComponent(target));
+    await expect(page.locator('#domain-input')).toHaveValue('');
+    await expect(page.locator('#domain-handoff-note')).toBeHidden();
+    await expect(page).toHaveURL(/#domain$/);
+  }
+  expect(checks).toBe(0);
+});
+
+
+test('same-page domain handoff abandons old evidence and resets domain-specific consent', async ({ page }) => {
+  let release;
+  let started;
+  let checks = 0;
+  const pending = new Promise(resolve => { started = resolve; });
+  await page.route('**/api/check', async route => {
+    checks++;
+    started();
+    await new Promise(resolve => { release = resolve; });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(domainReport('v=spf1 -all')) }).catch(() => {});
+  });
+  await page.goto('/');
+  await page.locator('#domain-input').fill('example.com');
+  await page.locator('#dkim-selector').fill('old-selector');
+  await page.locator('#domain-share').check();
+  await page.locator('#check-button').click();
+  await pending;
+  await page.evaluate(() => { location.hash = 'domain=other.example.com'; });
+  await expect(page.locator('#domain-input')).toHaveValue('other.example.com');
+  await expect(page.locator('#domain-handoff-note')).toBeVisible();
+  await expect(page.locator('#domain-share')).not.toBeChecked();
+  await expect(page.locator('#dkim-selector')).toHaveValue('');
+  await expect(page.locator('#check-button')).toBeEnabled();
+  release();
+  await expect(page.locator('#domain-report')).toBeHidden();
+  await expect(page.locator('#domain-loading')).toBeHidden();
+  expect(checks).toBe(1);
+});
+
+
+test('domain handoff wins over a delayed shared-report load', async ({ page }) => {
+  let release;
+  let started;
+  const pending = new Promise(resolve => { started = resolve; });
+  await page.route('**/api/reports/abcdefghijklmnop', async route => {
+    started();
+    await new Promise(resolve => { release = resolve; });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(domainReport('v=spf1 -all')) });
+  });
+  await page.goto('/#abcdefghijklmnop');
+  await pending;
+  await page.evaluate(() => { location.hash = 'domain=other.example.com'; });
+  await expect(page.locator('#domain-input')).toHaveValue('other.example.com');
+  release();
+  await page.waitForTimeout(100);
+  await expect(page.locator('#domain-report')).toBeHidden();
+  await expect(page.locator('#domain-handoff-note')).toBeVisible();
+  await expect(page.locator('#domain-loading')).toBeHidden();
+});
+
+for (const panel of ['domain', 'batch']) {
+  const id = 'abcdefghijklmnop';
+  const report = panel === 'domain'
+    ? { ...domainReport('v=spf1 -all'), id }
+    : { _reportType: 'batch', id, results: [domainReport('v=spf1 -all')], domains: ['example.com'] };
+  const button = panel === 'domain' ? '#export-json' : '#batch-export';
+  const status = `#${panel}-export-status`;
+  let exportVisit = 0;
+  async function openExportReport(page, stored = true) {
+    await page.route(`**/api/reports/${id}`, route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(stored ? report : { ...report, id: undefined }),
+    }));
+    await page.goto(`/?export-case=${++exportVisit}#${panel === 'batch' ? 'batch-' : ''}${id}`);
+    await expect(page.locator(`#${panel}-report`)).toBeVisible();
+  }
+
+  test(`${panel} JSON export reports HTTP and network failure without a download`, async ({ page }) => {
+    let downloads = 0;
+    page.on('download', () => downloads++);
+    await openExportReport(page);
+    for (const failure of ['expired', 'proxy', 'network']) {
+      await page.route(`**/api/reports/${id}/export`, route => failure === 'network'
+        ? route.abort('failed')
+        : route.fulfill({ status: failure === 'expired' ? 404 : 503,
+          contentType: failure === 'expired' ? 'application/json' : 'text/html',
+          body: failure === 'expired' ? JSON.stringify({ error: 'Report not found or expired' }) : '<h1>Unavailable</h1>' }));
+      await page.locator(button).click();
+      await expect(page.locator(status)).toContainText(failure === 'expired' ? 'expired' : failure === 'proxy' ? 'HTTP 503' : 'connection');
+      await expect(page.locator(button)).toBeEnabled();
+      await expect(page.locator(`#${panel}-report`)).toBeVisible();
+    }
+    expect(downloads).toBe(0);
+  });
+
+  test(`${panel} JSON export downloads verified and local-only reports`, async ({ page }) => {
+    for (const stored of [true, false]) {
+      await openExportReport(page, stored);
+      await page.route(`**/api/reports/${id}/export`, route => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(report),
+      }));
+      const download = page.waitForEvent('download');
+      await page.locator(button).click();
+      expect((await download).suggestedFilename()).toBe(panel === 'batch' ? 'email-security-batch.json' : 'email-security-example.com.json');
+      await expect(page.locator(status)).toHaveText('Report downloaded.');
+    }
+  });
+
+  test(`${panel} JSON export explains a timeout and allows retry`, async ({ page }) => {
+    await openExportReport(page);
+    await page.clock.install();
+    let started;
+    let release;
+    const pending = new Promise(resolve => { started = resolve; });
+    await page.route(`**/api/reports/${id}/export`, async route => {
+      started();
+      await new Promise(resolve => { release = resolve; });
+      await route.abort().catch(() => {});
+    });
+    await page.locator(button).click();
+    await pending;
+    await page.clock.fastForward(35001);
+    await expect(page.locator(status)).toContainText('timed out');
+    await expect(page.locator(button)).toBeEnabled();
+    release();
+  });
+
+  test(`${panel} JSON export is abandoned on editing and navigation`, async ({ page }) => {
+    let downloads = 0;
+    page.on('download', () => downloads++);
+    for (const action of ['edit', 'navigate']) {
+      await openExportReport(page);
+      let release;
+      let started;
+      const pending = new Promise(resolve => { started = resolve; });
+      await page.route(`**/api/reports/${id}/export`, async route => {
+        started();
+        await new Promise(resolve => { release = resolve; });
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(report) }).catch(() => {});
+      });
+      await page.locator(button).click();
+      await pending;
+      if (action === 'navigate') await page.locator('#tab-headers').click();
+      else if (panel === 'domain') await page.locator('#new-check').click();
+      else await page.locator('#batch-input').fill('other.example.com');
+      release();
+      await expect(page.locator(button)).toBeEnabled();
+      await page.waitForTimeout(100);
+      await expect(page.locator(status)).toBeEmpty();
+    }
+    expect(downloads).toBe(0);
+  });
+}
