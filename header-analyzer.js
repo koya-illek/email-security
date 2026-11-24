@@ -414,7 +414,7 @@ function arcChainIsConsistent(summary) {
   if (new Set(sizes).size !== 1) return false;
   const expected = Array.from({ length: counts.seal }, (_, i) => i + 1);
   for (const list of [instances.authenticationResults, instances.messageSignature, instances.seal]) {
-    if ([...list].sort((a, b) => a - b).join(',') !== expected.join(',')) return false;
+    if (list.toSorted((a, b) => a - b).join(',') !== expected.join(',')) return false;
   }
   return true;
 }

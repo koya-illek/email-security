@@ -238,7 +238,7 @@ await Promise.all([
     assert.equal(response.status, 200, `tools/list answered HTTP ${response.status}`);
     const payload = await response.json();
     const served = (payload.result?.tools || []).map(tool => tool.name);
-    assert.deepEqual(served.sort(), [...declared].sort(),
+    assert.deepEqual(served.toSorted(), declared.toSorted(),
       'the running server must expose exactly the tools openapi.yaml declares');
   }),
 ]);

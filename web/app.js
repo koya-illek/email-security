@@ -131,9 +131,6 @@
   $("#method-button")?.addEventListener("click", () => methodDialog.showModal());
   $("#footer-method-button")?.addEventListener("click", () => methodDialog.showModal());
   $("#dialog-close")?.addEventListener("click", () => methodDialog.close());
-  methodDialog?.addEventListener("click", (e) => {
-    if (e.target === methodDialog) methodDialog.close();
-  });
 
   // ─── Utility ─────────────────────────────────────────────────────
   function esc(v) {
@@ -901,7 +898,7 @@
     // Record absence is a determinate diagnostic result, not an inspection
     // failure: it renders neutrally in the report area instead of wearing
     // the red INSPECT_FAILED alert that genuine DNS trouble earns.
-    $("#spf-summary").innerHTML = "";
+    $("#spf-summary").replaceChildren();
     $("#spf-detail").innerHTML = `
       <div class="notice info">
         <strong>No SPF record published</strong>
@@ -1152,7 +1149,7 @@
     const requiresConfirmation = Boolean(spfChange) || noSenderHardFail;
     safetyConfirmation.classList.toggle("hidden", !requiresConfirmation);
     safetyNotice.classList.toggle("hidden", !requiresConfirmation);
-    safetyNotice.innerHTML = "";
+    safetyNotice.replaceChildren();
     if (spfChange) {
       safetyLabel.textContent = "I have reviewed and intentionally changed the imported SPF record";
       safetyNotice.innerHTML = `<strong>Review required before copying this SPF change.</strong>
@@ -1371,7 +1368,9 @@
 
   function sameTermMultiset(left, right) {
     if (left.length !== right.length) return false;
-    return [...left].sort().every((term, index) => term === [...right].sort()[index]);
+    const sortedLeft = left.toSorted();
+    const sortedRight = right.toSorted();
+    return sortedLeft.every((term, index) => term === sortedRight[index]);
   }
 
   function describeSpfChange(before, after) {
@@ -1454,7 +1453,7 @@
 
   headerInput?.addEventListener("input", () => {
     resetHeaderState();
-    headerResults.innerHTML = "";
+    headerResults.replaceChildren();
     headerError.classList.add("hidden");
   });
 
@@ -1500,7 +1499,7 @@
   clearHeadersBtn?.addEventListener("click", () => {
     resetHeaderState();
     headerInput.value = "";
-    headerResults.innerHTML = "";
+    headerResults.replaceChildren();
     headerError.classList.add("hidden");
   });
 
@@ -1546,7 +1545,7 @@
       // Analysis answers arrive over the network even though they share the
       // deployment; a drifted payload must degrade to readable copy, never
       // to a raw TypeError surfaced through the error panel.
-      headerResults.innerHTML = "";
+      headerResults.replaceChildren();
       showHeaderError("The analysis returned evidence this page could not render. Paste the headers and analyze again.");
     }
   }
@@ -1714,7 +1713,7 @@
     // A response landing after this click belongs to a discarded batch.
     batchGeneration.next();
     batchInput.value = "";
-    batchTable.innerHTML = "";
+    batchTable.replaceChildren();
     batchReport.classList.add("hidden");
     batchError.classList.add("hidden");
     $("#batch-rejected-note")?.classList.add("hidden");
@@ -1802,7 +1801,7 @@
     // Stored batch reports replay through here as external data; a missing
     // results array renders an empty table rather than crashing the panel.
     const rows = Array.isArray(results) ? results : [];
-    const sorted = batchSortCol ? [...rows].sort((a, b) => {
+    const sorted = batchSortCol ? rows.toSorted((a, b) => {
       let va, vb;
       if (batchSortCol === "domain") { va = a.domain; vb = b.domain; }
       else if (batchSortCol === "score") { va = a.overall_score; vb = b.overall_score; }

@@ -23,6 +23,7 @@
   <link rel="apple-touch-icon" href="./apple-touch-icon.png">
   <link rel="stylesheet" href="./styles.css">
   <script src="./config.js"></script>
+  <script src="./dialog-dismiss.js" defer></script>
   <script src="./app.js" defer></script>
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"Email Security","url":"https://email.illek.ie/","description":"Audit SPF, DKIM, DMARC, MX, transport security and message-header evidence.","applicationCategory":"SecurityApplication","operatingSystem":"Any","browserRequirements":"Requires a modern web browser","offers":{"@type":"Offer","price":"0","priceCurrency":"EUR"}}</script>
 </head>
@@ -473,7 +474,7 @@
     <button class="text-button" id="footer-method-button" type="button">Methodology</button>
   </footer>
 
-    <dialog id="method-dialog" aria-labelledby="method-dialog-title">
+    <dialog closedby="any" id="method-dialog" aria-labelledby="method-dialog-title">
     <button class="dialog-close" id="dialog-close" type="button" aria-label="Close">×</button>
     <!-- autofocus + tabindex lands focus on the title, not the Close button
          that happens to be the first focusable element. -->
