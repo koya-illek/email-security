@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
+import { beginRateLimitWindow, rateLimitWindowAt } from './rate-limit-window.mjs';
 
 // A stale dev server left by a crashed or previous run must never answer for
 // this suite, so bind an ephemeral listener to reserve a free port instead of
@@ -338,6 +339,10 @@ async function postResponse(path, body, headers = {}) {
   });
   assert.equal(invalidJson.status, 400, `invalid JSON answers 400${workerFaults}`);
   assert.match((await invalidJson.json()).error, /valid JSON/);
+  for(const selector of ['bad/selector','a'.repeat(64),{},'a..b']){
+    const invalidSelector=await postResponse('/api/check',{domain:'example.com',selector},{'CF-Connecting-IP':`203.0.113.${(postSequence++ % 200) + 1}`});
+    assert.equal(invalidSelector.status,400);assert.match((await invalidSelector.json()).error,/Invalid DKIM selector/);
+  }
   const wrongContentType = await postResponse('/api/check', { domain: 'example.com' }, { 'content-type': 'text/plain', 'CF-Connecting-IP': `203.0.113.${(postSequence++ % 200) + 1}` });
   assert.equal(wrongContentType.status, 415, 'REST analysis POSTs require application/json');
 
@@ -346,6 +351,7 @@ async function postResponse(path, body, headers = {}) {
   const runToken = `${process.pid}-${Date.now()}`;
   const client = `conformance-${runToken}-standard`;
   const standardBody = { headers: 'From: sender@example.com\r\n' };
+  const standardWindow = await beginRateLimitWindow();
   for (let attempt = 0; attempt < 60; attempt++) {
     let response = await postResponse('/api/header/analyze', standardBody, { 'CF-Connecting-IP': client });
     // workerd's simulated limiter binding fails intermittently under load
@@ -362,12 +368,14 @@ async function postResponse(path, body, headers = {}) {
     method: 'OPTIONS', headers: { 'CF-Connecting-IP': client }
   })).status, 200);
   const limited = await postResponse('/api/header/analyze', standardBody, { 'CF-Connecting-IP': client });
+  assert.equal(rateLimitWindowAt(), standardWindow, 'standard burst exceeded its fixed-window timing budget');
   assert.equal(limited.status, 429);
   assert.match(limited.headers.get('retry-after') || '', /^\d+$/);
   assert.equal(limited.headers.get('access-control-allow-origin'), '*');
 
   // Invalid payloads stop before DNS, enrichment, or SPF evaluation while still
   // exercising each expensive route's shared namespace.
+  const expensiveWindow = await beginRateLimitWindow();
   const expensiveClient = `conformance-${runToken}-expensive`;
   for (const [path, body, expectedStatus] of [
     ['/api/check', {}, 400],
@@ -387,6 +395,7 @@ async function postResponse(path, body, headers = {}) {
   const expensiveLimited = await postResponse('/api/spf/evaluate', {
     domain: '', ip: ''
   }, { 'CF-Connecting-IP': expensiveClient });
+  assert.equal(rateLimitWindowAt(), expensiveWindow, 'expensive burst exceeded its fixed-window timing budget');
   assert.equal(expensiveLimited.status, 429);
   assert.match(expensiveLimited.headers.get('retry-after') || '', /^\d+$/);
   assert.equal(expensiveLimited.headers.get('access-control-allow-origin'), '*');

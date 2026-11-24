@@ -141,6 +141,7 @@ function tools() {
         type: 'object', additionalProperties: false, required: ['domain'],
         properties: {
           domain: { type: 'string', maxLength: 253, description: 'Public DNS domain, for example example.com.' },
+          selector: { type:'string',maxLength:253,description:'Optional known DKIM selector, queried first within the existing DNS budget.' },
           share: { type: 'boolean', description: 'When true, persist a 14-day bearer report. Default false: analysis is not stored.' }
         },
       },

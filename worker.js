@@ -191,8 +191,14 @@ function createRequestBudget(limit = REQUEST_SUBREQUEST_LIMIT, deadline = null) 
   };
 }
 
+function validateSelector(selector, domain) {
+  if(selector===undefined||selector===null)return undefined;
+  if(typeof selector!=="string"||`${selector}._domainkey.${domain}`.length>253||!/^[A-Za-z0-9_-]{1,63}(?:\.[A-Za-z0-9_-]{1,63})*$/.test(selector))throw Object.assign(exposedError('Invalid DKIM selector'),{status:400});
+  return selector.toLowerCase();
+}
+
 async function createDomainReport(domain, env, budget = createRequestBudget(REQUEST_SUBREQUEST_LIMIT, Date.now() + ANALYSIS_WALL_MS), options = {}) {
-  const cacheKey = new Request(`https://cache.internal/${CACHE_VERSION}/${domain}`);
+  const cacheKey = new Request(`https://cache.internal/${CACHE_VERSION}/${domain}${options.selector?`?selector=${encodeURIComponent(options.selector)}`:""}`);
   const cache = caches.default;
   let analysis;
   const cached = await cache.match(cacheKey);
@@ -206,7 +212,7 @@ async function createDomainReport(domain, env, budget = createRequestBudget(REQU
     delete storedAnalysis.share;
     analysis = storedAnalysis;
   } else {
-    analysis = await analyzeDomain(domain, budget);
+    analysis = await analyzeDomain(domain, budget, options.selector);
     // Cache determinate and inconclusive/zero-score results so SERVFAIL and
     // timeout storms do not replay the full DoH ladder on every retry.
     // Inconclusive rows use a slightly shorter window.
@@ -640,14 +646,14 @@ async function handleRequest(request, env) {
       }
       const cleanDomain = normalizeDomain(args.domain);
       if (!cleanDomain || !isValidDomain(cleanDomain)) throw exposedError('A valid public domain is required');
-      return createDomainReport(cleanDomain, env, requestBudget, { share: requestedShare(args.share) });
+      return createDomainReport(cleanDomain, env, requestBudget, { share: requestedShare(args.share), selector:validateSelector(args.selector,cleanDomain) });
     });
   }
 
   // API endpoint
   if ((routePathname === '/api/check' || routePathname === '/api/v2/domain-check') && request.method === 'POST') {
     try {
-      const { domain, share } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
+      const { domain, share, selector } = await readJsonBody(request, NORMAL_JSON_BODY_MAX_BYTES);
       if (!domain) {
         return jsonResponse({ error: 'Domain required' }, 400, corsHeaders);
       }
@@ -658,7 +664,7 @@ async function handleRequest(request, env) {
         return jsonResponse({ error: 'Invalid domain' }, 400, corsHeaders);
       }
 
-      const report = await createDomainReport(cleanDomain, env, requestBudget, { share: requestedShare(share) });
+      const report = await createDomainReport(cleanDomain, env, requestBudget, { share: requestedShare(share), selector:validateSelector(selector,cleanDomain) });
       return jsonResponse(report, 200, corsHeaders);
     } catch (err) {
       const limited = bodyLimitResponse(err, corsHeaders);
@@ -1412,7 +1418,7 @@ async function enrichIp(ip, budget = null) {
   return { ...result, ip };
 }
 
-async function analyzeDomain(domain, budget = createRequestBudget(REQUEST_SUBREQUEST_LIMIT, Date.now() + ANALYSIS_WALL_MS)) {
+async function analyzeDomain(domain, budget = createRequestBudget(REQUEST_SUBREQUEST_LIMIT, Date.now() + ANALYSIS_WALL_MS), selector = null) {
   // Run all DNS queries in parallel
   const [
     spfRecords,
@@ -1442,7 +1448,7 @@ async function analyzeDomain(domain, budget = createRequestBudget(REQUEST_SUBREQ
   const mtaStsPolicy = mtaStsRecords.some(r => /^\s*v=STSv1(?:\s*;|\s*$)/i.test(r))
     ? await fetchMtaStsPolicy(domain, budget)
     : null;
-  const dkimResults = await checkDKIMSelectors(domain, spf.providers, mxRecords, budget);
+  const dkimResults = await checkDKIMSelectors(domain, spf.providers, mxRecords, budget, selector);
   await addDmarcReportAuthorisation(dmarc, budget);
   const ptrResult = await checkPTR(domain, mxRecords, budget);
 
@@ -1686,7 +1692,7 @@ async function spfDnsResolver(name, type, budget = null) {
   return records.map(value => String(value).replace(/\.$/, ''));
 }
 
-async function checkDKIMSelectors(domain, providers = [], mxRecords = [], budget = null) {
+async function checkDKIMSelectors(domain, providers = [], mxRecords = [], budget = null, knownSelector = null) {
   const inferred = new Set();
   providers.forEach(provider => (PROVIDER_DKIM_SELECTORS[provider] || []).forEach(selector => inferred.add(selector)));
 
@@ -1697,7 +1703,7 @@ async function checkDKIMSelectors(domain, providers = [], mxRecords = [], budget
   // Probe the whole bounded catalogue, inferred selectors first. Truncating
   // the scan below the catalogue size silently excluded its date-based
   // entries, which is exactly where Google publishes rotated selectors.
-  const selectors = [...new Set([...inferred, ...DKIM_SELECTORS])];
+  const selectors = [...new Set([...(knownSelector?[knownSelector]:[]), ...inferred, ...DKIM_SELECTORS])];
   const lookupState = { transient: false, authoritative: false };
   const results = await Promise.all(
     selectors.map(async selector => {

@@ -12,6 +12,7 @@
   let lastDomainReport = null;
   let spfValidationSequence = 0;
   let dmarcValidationSequence = 0;
+  const reportExports = { domain: null, batch: null };
   let importedSpf = null;
   let lastSpfSafetyKey = null;
 
@@ -36,6 +37,7 @@
 
   // ─── Tab Navigation ──────────────────────────────────────────────
   function selectTool(name, pushHash = true, focusPanel = true) {
+    for (const panel of ["domain", "batch"]) if (panel !== name) cancelReportExport(panel);
     const titles = { domain: "Check your domain’s email security.", batch: "Compare email security across domains.", spf: "Inspect your SPF record.", builder: "Build email authentication records.", headers: "Understand an email’s headers." };
     $("#home h1").textContent = titles[name] || titles.domain;
     document.body.dataset.emailTool = name;
@@ -273,19 +275,72 @@
     revokeButton: $("#revoke-share-link")
   }));
 
-  $("#export-json")?.addEventListener("click", () => {
-    if (lastDomainReport?.id) {
-      window.open(`${API_BASE}/api/reports/${lastDomainReport.id}/export`, "_blank", "noopener,noreferrer");
-    } else if (lastDomainReport) {
-      const blob = new Blob([JSON.stringify(lastDomainReport, null, 2)], { type: "application/json" });
+  function cancelReportExport(panel) {
+    reportExports[panel]?.abort();
+    reportExports[panel] = null;
+    const button = $(panel === "domain" ? "#export-json" : "#batch-export");
+    if (button) { button.disabled = false; button.textContent = "Export JSON"; }
+    const status = $(`#${panel}-export-status`);
+    if (status) status.textContent = "";
+  }
+
+  async function exportReport(panel) {
+    if (reportExports[panel]) return;
+    const currentReport = () => panel === "domain" ? lastDomainReport : lastBatchReport;
+    const report = currentReport();
+    if (!report) return;
+    const controller = new AbortController();
+    reportExports[panel] = controller;
+    const ownsExport = () => reportExports[panel] === controller && currentReport() === report;
+    const button = $(panel === "domain" ? "#export-json" : "#batch-export");
+    const status = $(`#${panel}-export-status`);
+    button.disabled = true;
+    button.textContent = "Preparing…";
+    status.textContent = "";
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 35000);
+    try {
+      let blob;
+      if (report.id) {
+        const response = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(report.id)}/export`, { signal: controller.signal });
+        if (!ownsExport()) return;
+        if (!response.ok) {
+          let message = `The report could not be exported (HTTP ${response.status}).`;
+          try {
+            const payload = await response.json();
+            if (typeof payload.error === "string") message = payload.error;
+          } catch { /* Keep the HTTP message for non-JSON errors. */ }
+          throw new Error(message);
+        }
+        blob = await response.blob();
+      } else {
+        blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+      }
+      if (!ownsExport() || controller.signal.aborted) return;
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `email-security-${lastDomainReport.domain || "report"}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      const domain = String(report.domain || "report").replace(/[^A-Za-z0-9.-]+/g, "-");
+      anchor.download = panel === "batch" ? "email-security-batch.json" : `email-security-${domain}.json`;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      status.textContent = "Report downloaded.";
+    } catch (error) {
+      if (!ownsExport()) return;
+      status.textContent = timedOut ? "The export timed out. Please retry."
+        : error instanceof TypeError ? "The export failed. Check your connection and try again."
+        : error.message || "The report could not be exported. Please retry.";
+    } finally {
+      clearTimeout(timeout);
+      if (ownsExport()) {
+        reportExports[panel] = null;
+        button.disabled = false;
+        button.textContent = "Export JSON";
+      }
     }
-  });
+  }
+
+  $("#export-json")?.addEventListener("click", () => exportReport("domain"));
 
   // ─── Load shared report from D1 ───────────────────────────────
   // A second link opened while one is loading must win: content rendering
@@ -295,6 +350,8 @@
   let sharedReportSequence = 0;
   const sharedPanelSequence = { domain: 0, batch: 0 };
   async function loadSharedReport(reportId, options = {}) {
+    cancelReportExport("domain");
+    cancelReportExport("batch");
     const sequence = ++sharedReportSequence;
     const stale = () => sequence !== sharedReportSequence;
     // The #batch- prefix is a hint for which panel owns failures and the
@@ -367,6 +424,7 @@
   const domainGeneration = createGeneration();
   let domainCheckInFlight = false;
   let domainCheckPromise = null;
+  let domainController=null;
   let refreshTimer;
 
   $("#refresh-domain").addEventListener("click", () => {
@@ -378,7 +436,42 @@
 
   // Editing the field orphans the in-flight answer: when the response lands,
   // the generation mismatch stops it from rendering under a different domain.
-  domainInput?.addEventListener("input", () => domainGeneration.next());
+  function abandonDomainCheck(){
+    cancelReportExport("domain");
+    domainGeneration.next();domainController?.abort();domainController=null;domainCheckInFlight=false;
+    domainLoading.classList.add("hidden");checkButton.disabled=false;
+  }
+  function clearDomainInputError() {
+    $("#domain-input-error").hidden = true;
+    $("#domain-input-error").textContent = "";
+    domainInput.removeAttribute("aria-invalid");
+    domainInput.removeAttribute("aria-describedby");
+  }
+  domainInput?.addEventListener("input", () => { abandonDomainCheck(); clearDomainInputError(); });
+  $("#dkim-selector")?.addEventListener("input",abandonDomainCheck);
+
+  // Fragment handoffs only prefill: they never submit or enable sharing.
+  function applyDomainHandoff(hash) {
+    if (!hash.startsWith("domain=")) return;
+    const domain = (new URLSearchParams(hash).get("domain") || "").toLowerCase();
+    if (/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])$/.test(domain)
+      && !/\.(?:local|internal|localhost|lan|home|arpa)$/.test(domain)) {
+      sharedReportSequence++;
+      abandonDomainCheck();
+      domainInput.value = domain;
+      clearDomainInputError();
+      $("#dkim-selector").value = "";
+      $("#domain-share").checked = false;
+      domainReport.classList.add("hidden");
+      domainError.classList.add("hidden");
+      selectTool("domain", false, false);
+      $("#domain-handoff-note").hidden = false;
+    }
+    history.replaceState(null, "", location.pathname + location.search + "#domain");
+  }
+  domainInput?.addEventListener("input", () => { $("#domain-handoff-note").hidden = true; });
+  applyDomainHandoff(hashVal);
+  window.addEventListener("hashchange", () => applyDomainHandoff(location.hash.slice(1)));
 
   checkForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -388,7 +481,11 @@
     // handler even with the submit button disabled; the flag keeps those
     // activations serial and exposes the running request so triggers can
     // queue behind it instead of being dropped.
+    cancelReportExport("domain");
+    clearDomainInputError();
     domainCheckInFlight = true;
+    const controller=new AbortController();domainController=controller;
+    const timeout=setTimeout(()=>controller.abort(),35000);
     const generation = domainGeneration.current();
     domainLoading.classList.remove("hidden");
     domainError.classList.add("hidden");
@@ -400,7 +497,8 @@
         const r = await fetch(`${API_BASE}/api/check`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domain, share: Boolean($("#domain-share")?.checked) }),
+          signal:controller.signal,
+          body: JSON.stringify({ domain, selector:$("#dkim-selector")?.value.trim()||undefined, share: Boolean($("#domain-share")?.checked) }),
         });
         const d = await parseApiResponse(r, "domain check");
         if (generation !== domainGeneration.current()) return;
@@ -408,9 +506,12 @@
         else showDomainResults(d);
       } catch (err) {
         if (generation === domainGeneration.current()) {
-          showDomainError(err.message || "Failed to analyze domain");
+          showDomainError(err.name==="AbortError"?"Domain check timed out. Please retry.":err.message || "Failed to analyze domain");
         }
       } finally {
+        clearTimeout(timeout);
+        if(domainController!==controller)return;
+        domainController=null;
         domainCheckInFlight = false;
         domainLoading.classList.add("hidden");
         checkButton.disabled = false;
@@ -421,7 +522,7 @@
   });
 
   $("#new-check")?.addEventListener("click", () => {
-    domainGeneration.next();
+    abandonDomainCheck();
     domainReport.classList.add("hidden");
     domainInput.focus();
   });
@@ -453,11 +554,23 @@
   });
 
   function showDomainError(msg) {
+    if (/invalid domain/i.test(msg)) {
+      const error = $("#domain-input-error");
+      error.textContent = "Enter a domain such as example.com, without spaces or an email address.";
+      error.hidden = false;
+      domainInput.setAttribute("aria-invalid", "true");
+      domainInput.setAttribute("aria-describedby", "domain-input-error");
+      domainError.classList.add("hidden");
+      domainInput.focus();
+      return;
+    }
     domainErrorMsg.textContent = msg;
     domainError.classList.remove("hidden");
   }
 
   function showDomainResults(d) {
+    cancelReportExport("domain");
+    clearDomainInputError();
     lastDomainReport = d;
     clearTimeout(refreshTimer);
     const observedAt = d.freshness?.observedAt || d.timestamp;
@@ -566,6 +679,7 @@
 
   async function revokeShare(report, { note, shareButton, revokeButton, hashPrefix = "" }) {
     if (!report?.id) return;
+    cancelReportExport(report === lastDomainReport ? "domain" : "batch");
     try {
       const r = await fetch(`${API_BASE}/api/reports/${report.id}`, { method: "DELETE" });
       const d = await parseApiResponse(r, "report");
@@ -1424,7 +1538,8 @@
   function renderHeaderAnalysis(d) {
     const summary = d.summary;
     let html = `<div class="trust-banner ${safeStatusClass(summary.status)}">
-      <strong>${esc(summary.verdict)}</strong>
+      <strong>${summary.status==="fail"?esc(summary.verdict)+" · ":""}Unverified pasted claims${Array.isArray(d.hops)&&!d.hops.length?" · No Received chain":""}</strong>
+      <span>${esc(summary.verdict)}</span>
       <span>${esc(summary.confidence)}${summary.authservId ? " · Receiver ID: " + esc(summary.authservId) : ""}. Authentication outcomes are reported by the pasted headers, not independently re-run.</span>
     </div>`;
 
@@ -1550,6 +1665,7 @@
   const batchGeneration = createGeneration();
 
   batchInput?.addEventListener("input", () => {
+    cancelReportExport("batch");
     // Like the single-domain input, editing orphans any in-flight batch so a
     // response for discarded lines cannot render afterwards.
     batchGeneration.next();
@@ -1578,6 +1694,7 @@
   }
 
   $("#batch-clear-btn")?.addEventListener("click", () => {
+    cancelReportExport("batch");
     // A response landing after this click belongs to a discarded batch.
     batchGeneration.next();
     batchInput.value = "";
@@ -1606,6 +1723,7 @@
       return;
     }
 
+    cancelReportExport("batch");
     const generation = batchGeneration.current();
     batchLoading.classList.remove("hidden");
     batchError.classList.add("hidden");
@@ -1662,19 +1780,7 @@
     hashPrefix: "batch-"
   }));
 
-  $("#batch-export")?.addEventListener("click", () => {
-    if (lastBatchReport?.id) {
-      window.open(`${API_BASE}/api/reports/${lastBatchReport.id}/export`, "_blank", "noopener,noreferrer");
-    } else if (lastBatchReport) {
-      const blob = new Blob([JSON.stringify(lastBatchReport, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "email-security-batch.json";
-      a.click();
-      URL.revokeObjectURL(url);
-    }
-  });
+  $("#batch-export")?.addEventListener("click", () => exportReport("batch"));
 
   function renderBatchTable(results) {
     // Stored batch reports replay through here as external data; a missing
@@ -1719,7 +1825,9 @@
       const scoreCell = r.overall_status === "error"
         ? `<span class="batch-status info">error</span><span class="cell-note">${esc(r.error || "Analysis failed")}</span>`
         : Number.isFinite(r.overall_score)
-          ? `<strong class="${scoreClassFor(r.overall_score)}">${r.overall_score}/100</strong>${truncated ? ' <span class="batch-status info">partial</span>' : ""}`
+          ? truncated
+            ? `<strong class="incomplete-assessment">Incomplete assessment</strong><span class="cell-note">Provisional score: ${r.overall_score}/100</span>`
+            : `<strong class="${scoreClassFor(r.overall_score)}">${r.overall_score}/100</strong>`
           : `<span class="batch-status info">unavailable</span><span class="cell-note">predates the current score format</span>`;
       html += `<td class="score-cell">${scoreCell}</td>`;
       html += `<td>${batchStatusCell(r.spf)}</td>`;
@@ -1778,7 +1886,7 @@
       const who = truncated.length === 1
         ? truncated[0].domain
         : `${truncated.length} domains`;
-      note.textContent = `${who} hit the DNS subrequest budget. Scores marked "partial" are incomplete and can look lower than reality; re-run them as single checks for full evidence.`;
+      note.textContent = `${who} hit the DNS subrequest budget. Incomplete assessments have provisional scores that can look lower than reality. Select a domain in the table to run a single check for fuller evidence.`;
       note.classList.remove("hidden");
     } else {
       note.classList.add("hidden");

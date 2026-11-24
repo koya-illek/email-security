@@ -12,7 +12,7 @@
     "test:spf": "node --test test/rfc7208.cjs test/mailauth-spf.test.cjs",
     "test:headers": "node --test test/header-analysis.cjs",
     "test:browser": "playwright test",
-    "test:integration": "wrangler d1 execute email-security-reports --local --file=schema.sql && node test/conformance.mjs",
+    "test:integration": "node --test test/rate-limit-window.test.mjs && wrangler d1 execute email-security-reports --local --file=schema.sql && node test/conformance.mjs",
     "test:retention": "node --test test/retention.test.cjs",
     "test:security": "node --test test/worker-security.test.mjs test/redirects.test.cjs",
     "test:mcp": "node --test test/mcp.test.mjs",
