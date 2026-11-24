@@ -13,7 +13,7 @@ function resolveRevision() {
   try {
     revision = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   } catch (error) {
-    throw new Error(`Cannot identify the release commit: ${error.message}`);
+    throw new Error(`Cannot identify the release commit: ${error.message}`, { cause: error });
   }
 
   const dirty = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0;

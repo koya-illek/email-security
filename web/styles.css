@@ -1258,3 +1258,5 @@ body:has(#panel-domain.active #domain-report:not(.hidden)) #home h1 { display:no
   .error-code { line-height: 1.5; overflow-wrap: anywhere; }
   #cancel-domain-check { display: block; margin: 16px 0 0; }
 }
+
+dialog:modal{overscroll-behavior:contain}dialog::backdrop{overflow:hidden;overscroll-behavior:contain}
