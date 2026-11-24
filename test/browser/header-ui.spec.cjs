@@ -249,6 +249,7 @@ test('domain checks stay unstored unless sharing is requested, and revoke delete
   await page.locator('#domain-share').check();
   await page.getByRole('button', { name: 'Check security' }).click();
   await expect(page.locator('#domain-share-note')).toContainText('Public bearer link');
+  await page.locator('#domain-report-options summary').click();
   await page.locator('#revoke-share-link').click();
   await expect(page.locator('#domain-share-note')).toContainText('revoked');
   expect(deleted).toBe(1);
@@ -1251,6 +1252,7 @@ for (const panel of ['domain', 'batch']) {
     }));
     await page.goto(`/?export-case=${++exportVisit}#${panel === 'batch' ? 'batch-' : ''}${id}`);
     await expect(page.locator(`#${panel}-report`)).toBeVisible();
+    if (panel === 'domain') await page.locator('#domain-report-options summary').click();
   }
 
   test(`${panel} JSON export reports HTTP and network failure without a download`, async ({ page }) => {
@@ -1329,3 +1331,44 @@ for (const panel of ['domain', 'batch']) {
     expect(downloads).toBe(0);
   });
 }
+
+
+test('domain cancellation keeps input, restores focus, and ignores a late answer', async ({ page }) => {
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  await page.route('**/api/check', async route => {
+    await held;
+    await route.fulfill({ json: domainReport('v=spf1 -all') }).catch(() => {});
+  });
+  await page.goto('/');
+  await page.locator('#domain-input').fill('example.com');
+  await page.locator('#dkim-selector').fill('selector1');
+  await page.locator('#check-button').click();
+  await expect(page.locator('#cancel-domain-check')).toBeVisible();
+  await page.locator('#cancel-domain-check').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#domain-input')).toBeFocused();
+  await expect(page.locator('#domain-input')).toHaveValue('example.com');
+  await expect(page.locator('#dkim-selector')).toHaveValue('selector1');
+  await expect(page.locator('#domain-check-status')).toContainText('Check cancelled');
+  await expect(page.locator('#check-button')).toBeEnabled();
+  release();
+  await page.waitForTimeout(100);
+  await expect(page.locator('#domain-report')).toBeHidden();
+  await expect(page.locator('#domain-error')).toBeHidden();
+});
+
+test('domain report leads to priority evidence and retains keyboard share/export disclosure', async ({ page }) => {
+  await page.route('**/api/check', route => route.fulfill({ json: domainReport('v=spf1 -all') }));
+  await page.goto('/');
+  await page.locator('#domain-input').fill('example.com');
+  await page.locator('#check-button').click();
+  await expect(page.locator('#domain-report')).toBeVisible();
+  await page.locator('#review-priority-evidence').click();
+  await expect(page.locator('#domain-results details[open] summary').first()).toBeFocused();
+  await expect(page.locator('#export-json')).toBeHidden();
+  await page.locator('#domain-report-options summary').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#export-json')).toBeVisible();
+  await expect(page.locator('#copy-share-link')).toBeVisible();
+});

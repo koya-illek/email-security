@@ -1246,3 +1246,15 @@ body:has(#panel-domain.active #domain-report:not(.hidden)) #home h1 { display:no
 @media (max-width: 620px) {
   h1, .report-header h2 { letter-spacing: -.03em; }
 }
+
+/* Focus the report on evidence; keep sharing/exporting deliberately secondary. */
+.domain-next-actions { margin-block-end: 8px; }
+.domain-report-options { margin-block-start: 8px; }
+#domain-check-status:empty { display: none; }
+#cancel-domain-check { margin-inline-start: 16px; }
+@media (max-width: 480px) {
+  .error-panel { flex-direction: column; gap: 12px; padding: 20px; }
+  .error-panel > div { min-inline-size: 0; inline-size: 100%; }
+  .error-code { line-height: 1.5; overflow-wrap: anywhere; }
+  #cancel-domain-check { display: block; margin: 16px 0 0; }
+}

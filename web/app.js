@@ -439,8 +439,21 @@
   function abandonDomainCheck(){
     cancelReportExport("domain");
     domainGeneration.next();domainController?.abort();domainController=null;domainCheckInFlight=false;
-    domainLoading.classList.add("hidden");checkButton.disabled=false;
+    domainLoading.classList.add("hidden");checkButton.disabled=false;domainCheckPromise=null;
+    $("#refresh-domain").disabled=Date.parse(lastDomainReport?.freshness?.refreshAfter || "") > Date.now();
   }
+  $("#cancel-domain-check").addEventListener("click", () => {
+    abandonDomainCheck();
+    $("#domain-check-status").textContent = "Check cancelled. Your domain and options have been kept.";
+    domainInput.focus();
+  });
+  $("#review-priority-evidence").addEventListener("click", () => {
+    const details = domainResults.querySelector("details[open]") || domainResults.querySelector("details");
+    if (!details) return;
+    details.open = true;
+    details.querySelector("summary")?.focus();
+    details.scrollIntoView({ block: "start", behavior: "instant" });
+  });
   function clearDomainInputError() {
     $("#domain-input-error").hidden = true;
     $("#domain-input-error").textContent = "";
@@ -483,6 +496,7 @@
     // queue behind it instead of being dropped.
     cancelReportExport("domain");
     clearDomainInputError();
+    $("#domain-check-status").textContent = "";
     domainCheckInFlight = true;
     const controller=new AbortController();domainController=controller;
     const timeout=setTimeout(()=>controller.abort(),35000);
@@ -631,6 +645,8 @@
     const details = domainResults.querySelectorAll(":scope > details");
     const firstDetails = details[priority >= 0 ? priority : warning >= 0 ? warning : 0];
     if (firstDetails) firstDetails.open = true;
+    $("#review-priority-evidence").textContent = priority >= 0 || warning >= 0 ? "Review priority evidence" : "Review records";
+    $("#domain-report-options").open = false;
 
     domainReport.classList.remove("hidden");
     revealResults(domainReport);

@@ -102,7 +102,10 @@
       <div class="loading-panel hidden" id="domain-loading" role="status" aria-live="polite">
         <span class="spinner" aria-hidden="true"></span>
         <p>Analyzing DNS records…</p>
+        <button class="secondary-button" id="cancel-domain-check" type="button">Cancel check</button>
       </div>
+
+      <p id="domain-check-status" class="share-note" role="status"></p>
 
       <div class="error-panel hidden" id="domain-error" role="alert">
         <span class="error-code">CHECK_FAILED</span>
@@ -129,15 +132,22 @@
         <div class="metrics" id="domain-metrics"></div>
         <section class="notice" id="domain-next-steps" aria-label="Recommended next steps"></section>
 
-          <div class="report-actions">
-            <button class="secondary-button" id="copy-share-link" type="button">Share report</button>
-            <button class="secondary-button hidden" id="revoke-share-link" type="button" disabled>Revoke share link</button>
-            <button class="secondary-button" id="export-json" type="button">Export JSON</button>
-            <button class="secondary-button" id="inspect-from-report" type="button">Inspect SPF</button>
-            <button class="secondary-button" id="build-from-report" type="button">Build records</button>
-            <button class="secondary-button" id="refresh-domain" type="button">Refresh DNS</button>
-            <button class="secondary-button" id="new-check" type="button" aria-label="Start a new check">New check</button>
-          </div>
+        <div class="report-actions domain-next-actions">
+          <button class="primary-button" id="review-priority-evidence" type="button">Review records</button>
+          <button class="secondary-button" id="inspect-from-report" type="button">Inspect SPF</button>
+          <button class="secondary-button" id="build-from-report" type="button">Build records</button>
+        </div>
+        <div class="report-actions domain-report-options">
+          <details class="export-menu" id="domain-report-options"><summary>Share and export</summary>
+            <div class="export-options">
+              <button class="secondary-button" id="copy-share-link" type="button">Share report</button>
+              <button class="secondary-button hidden" id="revoke-share-link" type="button" disabled>Revoke share link</button>
+              <button class="secondary-button" id="export-json" type="button">Export JSON</button>
+            </div>
+          </details>
+          <button class="secondary-button" id="refresh-domain" type="button">Refresh DNS</button>
+          <button class="secondary-button" id="new-check" type="button" aria-label="Start a new check">New check</button>
+        </div>
         <p class="share-note" id="domain-export-status" role="status"></p>
         <p class="share-note" id="domain-share-note"></p>
         <details class="report-observation" id="domain-observation"><summary>Observation details</summary>
