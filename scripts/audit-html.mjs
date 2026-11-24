@@ -9,7 +9,7 @@
 // Every check fetches over HTTP and exits non-zero on the first failure
 // category it cannot satisfy.
 import assert from 'node:assert/strict';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 const base = process.argv[2] && /^https?:\/\//.test(process.argv[2])
   ? process.argv[2].replace(/\/$/, '')
