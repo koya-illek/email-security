@@ -29,7 +29,7 @@
   "license": "MIT",
   "dependencies": {
     "ipaddr.js": "^2.5.0",
-    "mailauth": "^8.0.6",
+    "mailauth": "^8.1.0",
     "tldts": "^7.5.5"
   },
   "overrides": {
